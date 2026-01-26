@@ -70,8 +70,8 @@ type ProjectRepositoryLink struct {
 type ScmCommit struct {
 	ID                 string     `gorm:"primaryKey" json:"id"`
 	RepositoryID       string     `gorm:"not null; index:idx_scm_commit_repo_hash,unique; index:idx_scm_commit_repo_branch_date" json:"repository_id"`
-	Hash               string     `gorm:"not null; size:255; index:idx_scm_commit_repo_hash,unique" json:"hash"`
-	TruncatedHash      string     `gorm:"size:32" json:"truncated_hash"`
+	Hash               string     `gorm:"not null; size:64; index:idx_scm_commit_repo_hash,unique" json:"hash"`
+	TruncatedHash      string     `gorm:"size:16" json:"truncated_hash"`
 	Message            string     `gorm:"type:text" json:"message"`
 	HTMLURL            string     `gorm:"size:512" json:"html_url"`
 	URL                string     `gorm:"size:512" json:"url"`
@@ -90,18 +90,18 @@ type ScmCommit struct {
 	CommitterHTMLURL   string     `gorm:"size:512" json:"committer_html_url"`
 	CommitterURL       string     `gorm:"size:512" json:"committer_url"`
 	Ref                string     `gorm:"size:255" json:"ref"`
-	Branch             string     `gorm:"size:255; index:idx_scm_commit_repo_branch_date" json:"branch"`
+	Branch             string     `gorm:"size:191; index:idx_scm_commit_repo_branch_date" json:"branch"`
 	CreatedAt          CustomTime `gorm:"autoCreateTime" json:"created_at"`
 }
 
 // CommitStat stores the computed time totals for a commit per user/project/branch.
 type CommitStat struct {
 	ID                           string     `gorm:"primaryKey" json:"id"`
-	UserID                       string     `gorm:"not null; index:idx_commit_stats_user_project_branch_hash,unique" json:"user_id"`
-	Project                      string     `gorm:"not null; size:255; index:idx_commit_stats_user_project_branch_hash,unique" json:"project"`
+	UserID                       string     `gorm:"not null; size:128; index:idx_commit_stats_user_project_branch_hash,unique" json:"user_id"`
+	Project                      string     `gorm:"not null; size:191; index:idx_commit_stats_user_project_branch_hash,unique" json:"project"`
 	RepositoryID                 string     `gorm:"not null; index" json:"repository_id"`
-	Branch                       string     `gorm:"not null; size:255; index:idx_commit_stats_user_project_branch_hash,unique" json:"branch"`
-	CommitHash                   string     `gorm:"not null; size:255; index:idx_commit_stats_user_project_branch_hash,unique" json:"commit_hash"`
+	Branch                       string     `gorm:"not null; size:191; index:idx_commit_stats_user_project_branch_hash,unique" json:"branch"`
+	CommitHash                   string     `gorm:"not null; size:64; index:idx_commit_stats_user_project_branch_hash,unique" json:"commit_hash"`
 	TotalSeconds                 float64    `gorm:"not null" json:"total_seconds"`
 	HumanReadableTotal           string     `gorm:"size:64" json:"human_readable_total"`
 	HumanReadableTotalWithSecond string     `gorm:"size:64" json:"human_readable_total_with_seconds"`
