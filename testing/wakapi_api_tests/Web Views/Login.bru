@@ -10,6 +10,11 @@ post {
   auth: none
 }
 
+script:pre-request {
+  // allow following the redirect to HTML summary page
+  req.setMaxRedirects(3)
+}
+
 body:form-urlencoded {
   username: writeuser
   password: {{WRITEUSER_PASSWORD}}

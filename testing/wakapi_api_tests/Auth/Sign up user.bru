@@ -10,6 +10,11 @@ post {
   auth: none
 }
 
+script:pre-request {
+  // Follow redirects so we assert on the rendered success page
+  req.setMaxRedirects(3)
+}
+
 body:form-urlencoded {
   location: {{TZ}}
   username: testuser

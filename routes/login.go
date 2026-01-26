@@ -249,7 +249,7 @@ func (h *LoginHandler) PostSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	routeutils.SetSuccess(r, w, "account created successfully")
+	routeutils.SetSuccess(r, w, "Account created successfully")
 	http.Redirect(w, r, h.config.Server.BasePath, http.StatusFound)
 }
 
