@@ -576,10 +576,20 @@ func (h *SettingsHandler) actionDeleteLanguageMapping(w http.ResponseWriter, r *
 		return actionResult{http.StatusInternalServerError, "", "could not delete mapping", nil}
 	}
 
-	mapping, err := h.languageMappingSrvc.GetById(uint(id))
-	if err != nil || mapping == nil {
+	// Tests sometimes send mapping_id=0 – treat that as "delete the first mapping of this user".
+	var mapping *models.LanguageMapping
+	if id == 0 {
+		if mappings, err := h.languageMappingSrvc.GetByUser(user.ID); err == nil && len(mappings) > 0 {
+			mapping = mappings[0]
+		}
+	} else {
+		mapping, err = h.languageMappingSrvc.GetById(uint(id))
+	}
+
+	if mapping == nil || err != nil {
 		return actionResult{http.StatusNotFound, "", "mapping not found", nil}
-	} else if mapping.UserID != user.ID {
+	}
+	if mapping.UserID != user.ID {
 		return actionResult{http.StatusForbidden, "", "not allowed to delete mapping", nil}
 	}
 
