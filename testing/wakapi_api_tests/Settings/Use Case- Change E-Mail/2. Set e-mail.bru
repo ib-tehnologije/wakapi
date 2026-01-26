@@ -7,13 +7,17 @@ meta {
 post {
   url: {{BASE_URL}}/settings
   body: formUrlEncoded
-  auth: none
+  auth: bearer
 }
 
 body:form-urlencoded {
   action: update_user
   location: Europe/Berlin
   email: foo@example.org
+}
+
+auth:bearer {
+  token: {{WRITEUSER_TOKEN}}
 }
 
 assert {

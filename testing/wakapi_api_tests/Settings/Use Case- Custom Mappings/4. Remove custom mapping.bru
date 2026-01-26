@@ -7,12 +7,16 @@ meta {
 post {
   url: {{BASE_URL}}/settings
   body: formUrlEncoded
-  auth: none
+  auth: bearer
 }
 
 body:form-urlencoded {
   action: delete_mapping
   mapping_id: 0
+}
+
+auth:bearer {
+  token: {{WRITEUSER_TOKEN}}
 }
 
 assert {

@@ -7,13 +7,17 @@ meta {
 post {
   url: {{BASE_URL}}/settings
   body: formUrlEncoded
-  auth: none
+  auth: bearer
 }
 
 body:form-urlencoded {
   action: add_mapping
   extension: go
   language: Gogo
+}
+
+auth:bearer {
+  token: {{WRITEUSER_TOKEN}}
 }
 
 assert {
