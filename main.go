@@ -69,6 +69,11 @@ var (
 	metricsRepository         *repositories.MetricsRepository
 	durationRepository        *repositories.DurationRepository
 	apiKeyRepository          repositories.IApiKeyRepository
+	scmAccountRepository      repositories.IScmAccountRepository
+	scmRepositoryRepository   repositories.IScmRepositoryRepository
+	projectRepoLinkRepository repositories.IProjectRepositoryLinkRepository
+	scmCommitRepository       repositories.IScmCommitRepository
+	commitStatRepository      repositories.ICommitStatRepository
 )
 
 var (
@@ -89,6 +94,7 @@ var (
 	housekeepingService    services.IHousekeepingService
 	miscService            services.IMiscService
 	apiKeyService          services.IApiKeyService
+	commitService          services.ICommitService
 )
 
 // TODO: Refactor entire project to be structured after business domains
@@ -179,6 +185,11 @@ func main() {
 	metricsRepository = repositories.NewMetricsRepository(db)
 	durationRepository = repositories.NewDurationRepository(db)
 	apiKeyRepository = repositories.NewApiKeyRepository(db)
+	scmAccountRepository = repositories.NewScmAccountRepository(db)
+	scmRepositoryRepository = repositories.NewScmRepositoryRepository(db)
+	projectRepoLinkRepository = repositories.NewProjectRepositoryLinkRepository(db)
+	scmCommitRepository = repositories.NewScmCommitRepository(db)
+	commitStatRepository = repositories.NewCommitStatRepository(db)
 
 	// Services
 	mailService = mail.NewMailService()
@@ -197,6 +208,7 @@ func main() {
 	diagnosticsService = services.NewDiagnosticsService(diagnosticsRepository)
 	housekeepingService = services.NewHousekeepingService(userService, heartbeatService, summaryService, aliasRepository) // can pass any repo here
 	miscService = services.NewMiscService(userService, heartbeatService, summaryService, keyValueService, mailService)
+	commitService = services.NewCommitService(scmAccountRepository, scmRepositoryRepository, projectRepoLinkRepository, scmCommitRepository, commitStatRepository, userService, heartbeatService, durationService)
 
 	if config.App.LeaderboardEnabled {
 		leaderboardService = services.NewLeaderboardService(leaderboardRepository, summaryService, userService)
@@ -237,6 +249,7 @@ func main() {
 	wakatimeV1HeartbeatsHandler := wtV1Routes.NewHeartbeatHandler(userService, heartbeatService)
 	wakatimeV1LeadersHandler := wtV1Routes.NewLeadersHandler(userService, leaderboardService)
 	wakatimeV1UserAgentsHandler := wtV1Routes.NewUserAgentsHandler(userService, heartbeatService)
+	wakatimeV1CommitsHandler := wtV1Routes.NewCommitsHandler(userService, commitService)
 	shieldV1BadgeHandler := shieldsV1Routes.NewBadgeHandler(summaryService, userService)
 
 	// MVC Handlers
@@ -316,6 +329,7 @@ func main() {
 	wakatimeV1HeartbeatsHandler.RegisterRoutes(apiRouter)
 	wakatimeV1LeadersHandler.RegisterRoutes(apiRouter)
 	wakatimeV1UserAgentsHandler.RegisterRoutes(apiRouter)
+	wakatimeV1CommitsHandler.RegisterRoutes(apiRouter)
 	shieldV1BadgeHandler.RegisterRoutes(apiRouter)
 	captchaHandler.RegisterRoutes(apiRouter)
 

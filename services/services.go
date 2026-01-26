@@ -181,3 +181,9 @@ type IApiKeyService interface {
 	Create(*models.ApiKey) (*models.ApiKey, error)
 	Delete(*models.ApiKey) error
 }
+
+type ICommitService interface {
+	LinkProject(*models.User, string, string, string, string) (*models.ProjectRepositoryLink, error)
+	GetCommits(*models.User, string, string, string, int, int) (*CommitsResult, error)
+	GetCommit(*models.User, string, string, string, string) (*CommitResult, error)
+}

@@ -105,6 +105,13 @@ func InsertBatchChunked[T any](data []T, model T, db *gorm.DB) error {
 	})
 }
 
+// clauseOnConflictDoUpdateAll returns a clause to do upsert (update all columns) portable across drivers.
+func clauseOnConflictDoUpdateAll() clause.OnConflict {
+	return clause.OnConflict{
+		DoUpdates: clause.AssignmentColumns([]string{}), // empty slice means update all columns
+	}
+}
+
 func insertBatch[T any](data []T, model T, db *gorm.DB) error {
 	// sqlserver on conflict has bug https://github.com/go-gorm/sqlserver/issues/100
 	// As a workaround, insert one by one, and ignore duplicate key error

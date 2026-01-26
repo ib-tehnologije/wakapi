@@ -56,3 +56,25 @@ func FmtWakatimeDuration(d time.Duration) string {
 	m := d / time.Minute
 	return fmt.Sprintf("%d hrs %d mins", h, m)
 }
+
+// FmtWakatimeDurationWithSeconds returns a human readable string including seconds,
+// matching WakaTime style, e.g. "1 hr 2 mins 5 secs".
+func FmtWakatimeDurationWithSeconds(d time.Duration) string {
+	d = d.Round(time.Second)
+	h := d / time.Hour
+	d -= h * time.Hour
+	m := d / time.Minute
+	d -= m * time.Minute
+	s := d / time.Second
+
+	parts := []string{}
+	if h > 0 {
+		parts = append(parts, fmt.Sprintf("%d hrs", h))
+	}
+	if m > 0 || h > 0 {
+		parts = append(parts, fmt.Sprintf("%d mins", m))
+	}
+	parts = append(parts, fmt.Sprintf("%d secs", s))
+
+	return strings.Join(parts, " ")
+}
