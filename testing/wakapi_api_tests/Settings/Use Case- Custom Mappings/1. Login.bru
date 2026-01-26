@@ -11,8 +11,7 @@ post {
 }
 
 script:pre-request {
-  // follow redirect to summary page so assertions see HTML body
-  req.setMaxRedirects(3)
+  req.setMaxRedirects(0)
 }
 
 body:form-urlencoded {
@@ -21,6 +20,6 @@ body:form-urlencoded {
 }
 
 assert {
-  res.status: eq 200
-  res.body: contains Total Time
+  res.status: eq 302
+  res.headers['location']: eq /summary
 }

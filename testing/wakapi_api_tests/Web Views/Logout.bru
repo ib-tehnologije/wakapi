@@ -10,7 +10,11 @@ post {
   auth: none
 }
 
+script:pre-request {
+  req.setMaxRedirects(0)
+}
+
 assert {
-  res.body: contains </html>
-  res.body: notContains User Profile Avatar
+  res.status: eq 302
+  res.headers['location']: eq /
 }

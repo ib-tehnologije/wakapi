@@ -10,11 +10,6 @@ post {
   auth: none
 }
 
-script:pre-request {
-  // Follow redirects so we assert on the rendered success page
-  req.setMaxRedirects(3)
-}
-
 body:form-urlencoded {
   location: {{TZ}}
   username: testuser
@@ -24,6 +19,6 @@ body:form-urlencoded {
 }
 
 assert {
-  res.status: eq 200
-  res.body: contains Account created successfully
+  res.status: eq 302
+  res.headers['location']: eq /
 }

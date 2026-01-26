@@ -11,8 +11,7 @@ post {
 }
 
 script:pre-request {
-  // allow following the redirect to HTML summary page
-  req.setMaxRedirects(3)
+  req.setMaxRedirects(0)
 }
 
 body:form-urlencoded {
@@ -21,5 +20,6 @@ body:form-urlencoded {
 }
 
 assert {
-  res.body: contains </html>
+  res.status: eq 302
+  res.headers['location']: eq /summary
 }

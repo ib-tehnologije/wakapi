@@ -15,18 +15,12 @@ body:form-urlencoded {
   password: testpassword
 }
 
-// allow a single redirect back to /summary
-script:pre-request {
-  req.setMaxRedirects(1)
-}
-
 assert {
   res.status: eq 302
   res.headers['location']: eq /summary
 }
 
 script:pre-request {
-  // Do not follow 3xx redirects
   req.setMaxRedirects(0)
 }
 
