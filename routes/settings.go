@@ -576,7 +576,7 @@ func (h *SettingsHandler) actionDeleteLanguageMapping(w http.ResponseWriter, r *
 		return actionResult{http.StatusInternalServerError, "", "could not delete mapping", nil}
 	}
 
-	// Tests sometimes send mapping_id=0 – treat that as "delete the first mapping of this user".
+	// Tests sometimes send mapping_id=0 – treat that as "delete the first mapping of this user" for convenience.
 	var mapping *models.LanguageMapping
 	if id == 0 {
 		if mappings, err := h.languageMappingSrvc.GetByUser(user.ID); err == nil && len(mappings) > 0 {

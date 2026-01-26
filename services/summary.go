@@ -50,6 +50,17 @@ func NewSummaryService(summaryRepo repositories.ISummaryRepository, heartbeatSer
 		}
 	}(&sub1)
 
+	sub2 := srv.eventBus.Subscribe(0, config.EventLanguageMappingsChanged)
+	go func(sub *hub.Subscription) {
+		for m := range sub.Receiver {
+			userId := m.Fields[config.FieldUserId].(string)
+			srv.invalidateUserCache(userId)
+			if err := srv.repository.DeleteByUser(userId); err != nil {
+				slog.Error("failed to delete summaries after language mapping change", "user", userId, "error", err)
+			}
+		}
+	}(&sub2)
+
 	return srv
 }
 
