@@ -10,6 +10,11 @@ post {
   auth: none
 }
 
+script:pre-request {
+  // Do not follow 3xx so we can assert the redirect status/location
+  req.setMaxRedirects(0)
+}
+
 body:form-urlencoded {
   location: {{TZ}}
   username: testuser
