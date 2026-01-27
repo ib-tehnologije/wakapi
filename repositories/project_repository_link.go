@@ -5,6 +5,7 @@ import (
 
 	"github.com/muety/wakapi/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type ProjectRepositoryLinkRepository struct {
@@ -17,7 +18,10 @@ func NewProjectRepositoryLinkRepository(db *gorm.DB) *ProjectRepositoryLinkRepos
 
 func (r *ProjectRepositoryLinkRepository) Upsert(link *models.ProjectRepositoryLink) error {
 	return r.db.
-		Clauses(clauseOnConflictDoUpdateAll()).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "user_id"}, {Name: "project"}},
+			DoUpdates: clause.AssignmentColumns([]string{"repository_id", "branch_override", "last_synced_at", "sync_status", "sync_error", "updated_at"}),
+		}).
 		Create(link).Error
 }
 

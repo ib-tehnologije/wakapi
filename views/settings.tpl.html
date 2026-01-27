@@ -795,9 +795,10 @@
                             <label class="font-semibold text-foreground text-sm" for="github_repo_picker">GitHub repository</label>
                             <select id="github_repo_picker" class="select-default" :disabled="githubRepos.length === 0">
                                 <option v-if="githubRepos.length === 0">Click “Load repos” first</option>
-                                <option v-for="repo in githubRepos" :key="repo.id" :value="repo.id" v-text="repo.full_name"></option>
+                                <option v-for="repo in githubRepos" :key="repo.id" :value="repo.id" :selected="repo.id === githubSuggestedId" v-text="repo.full_name"></option>
                             </select>
-                            <small class="text-muted" v-if="githubRepos.length > 0" v-text="'Showing ' + githubRepos.length + ' repos (first page)'"></small>
+                            <small class="text-muted" v-if="githubRepos.length > 0" v-text="'Loaded ' + githubRepos.length + ' repos'"></small>
+                            <small class="text-muted block" v-if="githubSuggestedId">Suggested match preselected based on project name.</small>
                         </div>
                         <div class="flex flex-col">
                             <label class="font-semibold text-foreground text-sm" for="github_branch_picker">Branch (optional)</label>

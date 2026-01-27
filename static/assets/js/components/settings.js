@@ -9,6 +9,7 @@ PetiteVue.createApp({
     githubRepoLoading: false,
     githubPatMessage: "",
     githubRepoMessage: "",
+    githubSuggestedId: "",
     labels: {},
     get tzOptions() {
         return [
@@ -124,12 +125,39 @@ PetiteVue.createApp({
                 throw new Error(await res.text());
             }
             this.githubRepos = await res.json();
+            this.updateSuggestedRepo();
         } catch (e) {
             console.error(e);
             alert("Failed to load repositories. Did you save a PAT?");
         } finally {
             this.githubRepoLoading = false;
         }
+    },
+    updateSuggestedRepo() {
+        const project = document.getElementById("github_project_picker")?.value || "";
+        if (!project || this.githubRepos.length === 0) {
+            this.githubSuggestedId = "";
+            return;
+        }
+        const p = project.toLowerCase();
+        let best = {score: -1, id: ""};
+        this.githubRepos.forEach((r) => {
+            const name = (r.full_name || "").toLowerCase();
+            const repoOnly = name.split("/").pop() || "";
+            let score = 0;
+            if (name === p || repoOnly === p) score = 100;
+            else if (name.includes(p)) score = 80;
+            else if (repoOnly.includes(p)) score = 70;
+            else {
+                // simple similarity: longer common substring length
+                const common = longestCommonSubsequenceLength(repoOnly, p);
+                score = common;
+            }
+            if (score > best.score) {
+                best = {score, id: r.id};
+            }
+        });
+        this.githubSuggestedId = best.id;
     },
     async linkGithubRepo() {
         const project = document.getElementById("github_project_picker")?.value;
@@ -171,5 +199,22 @@ PetiteVue.createApp({
         this.updateTab();
         window.addEventListener("hashchange", () => this.updateTab());
         this.attachGitHubSyncButtons();
+        const projectSelect = document.getElementById("github_project_picker");
+        if (projectSelect) {
+            projectSelect.addEventListener("change", () => this.updateSuggestedRepo());
+        }
     },
 }).mount("#settings-page");
+
+function longestCommonSubsequenceLength(a, b) {
+    const dp = Array(a.length + 1)
+        .fill(0)
+        .map(() => Array(b.length + 1).fill(0));
+    for (let i = 1; i <= a.length; i++) {
+        for (let j = 1; j <= b.length; j++) {
+            if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1;
+            else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+        }
+    }
+    return dp[a.length][b.length];
+}

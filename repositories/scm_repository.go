@@ -3,6 +3,7 @@ package repositories
 import (
 	"github.com/muety/wakapi/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type ScmRepositoryRepository struct {
@@ -15,7 +16,10 @@ func NewScmRepositoryRepository(db *gorm.DB) *ScmRepositoryRepository {
 
 func (r *ScmRepositoryRepository) Upsert(repo *models.ScmRepository) error {
 	return r.db.
-		Clauses(clauseOnConflictDoUpdateAll()).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "provider"}, {Name: "external_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"full_name", "name", "owner", "html_url", "api_url", "description", "homepage", "default_branch", "is_private", "is_fork", "star_count", "fork_count", "watch_count", "updated_at"}),
+		}).
 		Create(repo).Error
 }
 
