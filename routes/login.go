@@ -149,7 +149,7 @@ func (h *LoginHandler) PostLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	routeutils.ClearSession(r, w)                                    // clear all session data
 	http.SetCookie(w, h.config.GetClearCookie(models.AuthCookieKey)) // clear auth token
-	http.Redirect(w, r, fmt.Sprintf("%s/", h.config.Server.BasePath), http.StatusFound)
+	http.Redirect(w, r, fmt.Sprintf("%s/", strings.TrimSuffix(h.config.Server.BasePathOrRoot(), "/")), http.StatusFound)
 }
 
 func (h *LoginHandler) GetSignup(w http.ResponseWriter, r *http.Request) {
@@ -250,7 +250,7 @@ func (h *LoginHandler) PostSignup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	routeutils.SetSuccess(r, w, "Account created successfully")
-	http.Redirect(w, r, h.config.Server.BasePath, http.StatusFound)
+	http.Redirect(w, r, h.config.Server.BasePathOrRoot(), http.StatusFound)
 }
 
 func (h *LoginHandler) GetResetPassword(w http.ResponseWriter, r *http.Request) {
@@ -384,7 +384,7 @@ func (h *LoginHandler) PostResetPassword(w http.ResponseWriter, r *http.Request)
 	}
 
 	routeutils.SetSuccess(r, w, "an e-mail was sent to you in case your e-mail address was registered")
-	http.Redirect(w, r, h.config.Server.BasePath, http.StatusFound)
+	http.Redirect(w, r, h.config.Server.BasePathOrRoot(), http.StatusFound)
 }
 
 func (h *LoginHandler) GetOidcLogin(w http.ResponseWriter, r *http.Request) {
