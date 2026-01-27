@@ -49,6 +49,8 @@ jobs:
           tags: |
             latest
             alpine
+            type=raw,value={{date 'YYYYMMDDHHmmss'}}
+            type=sha
             type=semver,pattern={{major}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{version}}
