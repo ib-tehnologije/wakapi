@@ -165,6 +165,7 @@ type IScmRepositoryRepository interface {
 	IBaseRepository
 	Upsert(*models.ScmRepository) error
 	GetByProviderAndFullName(string, string) (*models.ScmRepository, error)
+	GetByExternalID(string, string) (*models.ScmRepository, error)
 	GetByID(string) (*models.ScmRepository, error)
 	Delete(*models.ScmRepository) error
 }
@@ -173,6 +174,7 @@ type IProjectRepositoryLinkRepository interface {
 	IBaseRepository
 	Upsert(*models.ProjectRepositoryLink) error
 	GetByUserAndProject(string, string) (*models.ProjectRepositoryLink, error)
+	GetByID(string) (*models.ProjectRepositoryLink, error)
 	DeleteByUserAndProject(string, string) error
 	ListByUser(string) ([]*models.ProjectRepositoryLink, error)
 	ListStale(time.Time, int) ([]*models.ProjectRepositoryLink, error)

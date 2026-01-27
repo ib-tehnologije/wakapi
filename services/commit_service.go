@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/gofrs/uuid/v5"
@@ -83,19 +84,19 @@ func NewCommitService(
 	}
 }
 
-// LinkProject links a Wakapi project to a GitHub repo using a PAT (fine-grained, contents read scope).
-func (s *CommitService) LinkProject(user *models.User, project, fullName, pat, branchOverride string) (*models.ProjectRepositoryLink, error) {
-	if fullName == "" || pat == "" {
-		return nil, errors.New("repository full name and token are required")
+// LinkProject links a Wakapi project to a GitHub repo using an explicit token (PAT) or the user's stored SCM account token.
+// fullName must be in the form owner/repo.
+func (s *CommitService) LinkProject(user *models.User, project, fullName, token, branchOverride string) (*models.ProjectRepositoryLink, error) {
+	if fullName == "" {
+		return nil, errors.New("repository full name is required")
 	}
 
-	cipher := newTokenCipher()
-	encToken, err := cipher.Encrypt(pat)
+	account, plainToken, err := s.resolveAccountToken(user, token)
 	if err != nil {
 		return nil, err
 	}
 
-	client := NewGitHubClient(pat)
+	client := NewGitHubClient(plainToken)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -104,39 +105,16 @@ func (s *CommitService) LinkProject(user *models.User, project, fullName, pat, b
 		return nil, err
 	}
 
-	repoModel := &models.ScmRepository{
-		ID:            uuid.Must(uuid.NewV4()).String(),
-		Provider:      models.ScmProviderGithub,
-		ExternalID:    fmt.Sprintf("%d", repo.ID),
-		FullName:      repo.FullName,
-		Name:          repo.Name,
-		Owner:         repo.Owner.Login,
-		HTMLURL:       repo.HTMLURL,
-		APIURL:        repo.URL,
-		Description:   repo.Description,
-		Homepage:      repo.Homepage,
-		DefaultBranch: repo.DefaultBranch,
-		IsPrivate:     repo.Private,
-		IsFork:        repo.Fork,
-		StarCount:     repo.Stargazers,
-		ForkCount:     repo.Forks,
-		WatchCount:    repo.Watchers,
+	repoModel := mapGitHubRepo(repo)
+	if existing, err := s.repos.GetByExternalID(models.ScmProviderGithub, repoModel.ExternalID); err == nil {
+		repoModel.ID = existing.ID
 	}
 	if err := s.repos.Upsert(repoModel); err != nil {
 		return nil, err
 	}
 
-	account := &models.ScmAccount{
-		ID:             uuid.Must(uuid.NewV4()).String(),
-		UserID:         user.ID,
-		Provider:       models.ScmProviderGithub,
-		AuthType:       models.ScmAuthTypePat,
-		AccessTokenEnc: encToken,
-		ProviderLogin:  repo.Owner.Login,
-	}
-	if err := s.accounts.Upsert(account); err != nil {
-		return nil, err
-	}
+	account.ProviderLogin = repo.Owner.Login
+	_ = s.accounts.Upsert(account)
 
 	link := &models.ProjectRepositoryLink{
 		ID:             uuid.Must(uuid.NewV4()).String(),
@@ -155,6 +133,52 @@ func (s *CommitService) LinkProject(user *models.User, project, fullName, pat, b
 		slog.Warn("initial sync failed", "error", err)
 	}
 
+	return link, nil
+}
+
+// LinkProjectWithRepo links using a stored SCM account and GitHub repository external id.
+func (s *CommitService) LinkProjectWithRepo(user *models.User, project, repoExternalID, branchOverride string) (*models.ProjectRepositoryLink, error) {
+	if repoExternalID == "" {
+		return nil, errors.New("repository id is required")
+	}
+
+	account, plainToken, err := s.resolveAccountToken(user, "")
+	if err != nil {
+		return nil, err
+	}
+
+	client := NewGitHubClient(plainToken)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	repo, err := client.GetRepoByID(ctx, repoExternalID)
+	if err != nil {
+		return nil, err
+	}
+
+	repoModel := mapGitHubRepo(repo)
+	if existing, err := s.repos.GetByExternalID(models.ScmProviderGithub, repoModel.ExternalID); err == nil {
+		repoModel.ID = existing.ID
+	}
+	if err := s.repos.Upsert(repoModel); err != nil {
+		return nil, err
+	}
+
+	link := &models.ProjectRepositoryLink{
+		ID:             uuid.Must(uuid.NewV4()).String(),
+		UserID:         user.ID,
+		Project:        project,
+		RepositoryID:   repoModel.ID,
+		BranchOverride: branchOverride,
+		SyncStatus:     "pending",
+	}
+	if err := s.links.Upsert(link); err != nil {
+		return nil, err
+	}
+
+	if err := s.Sync(link, account, repoModel); err != nil {
+		slog.Warn("initial sync failed", "error", err)
+	}
 	return link, nil
 }
 
@@ -359,6 +383,39 @@ func (s *CommitService) ListLinks(user *models.User) ([]*ProjectLinkInfo, error)
 	return results, nil
 }
 
+// ListRepos lists repositories accessible to the stored SCM account token.
+func (s *CommitService) ListRepos(user *models.User, search string, page, perPage int) ([]*models.ScmRepository, error) {
+	_, plainToken, err := s.resolveAccountToken(user, "")
+	if err != nil {
+		return nil, err
+	}
+
+	client := NewGitHubClient(plainToken)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if perPage <= 0 || perPage > 100 {
+		perPage = 30
+	}
+	if page <= 0 {
+		page = 1
+	}
+
+	repos, err := client.ListRepos(ctx, page, perPage)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]*models.ScmRepository, 0, len(repos))
+	for _, r := range repos {
+		if search != "" && !strings.Contains(strings.ToLower(r.FullName), strings.ToLower(search)) {
+			continue
+		}
+		results = append(results, mapGitHubRepo(r))
+	}
+	return results, nil
+}
+
 // UpdateLink updates the branch override and/or token (if provided) for a linked project.
 func (s *CommitService) UpdateLink(user *models.User, project, branchOverride, token string) error {
 	link, err := s.links.GetByUserAndProject(user.ID, project)
@@ -376,6 +433,34 @@ func (s *CommitService) UpdateLink(user *models.User, project, branchOverride, t
 	}
 
 	// mark for resync
+	link.LastSyncedAt = nil
+	link.SyncStatus = "pending"
+	link.SyncError = ""
+	return s.links.Upsert(link)
+}
+
+// UpdateLinkByID updates link by id (for API routes).
+func (s *CommitService) UpdateLinkByID(user *models.User, linkID, branchOverride, repoExternalID string) error {
+	link, err := s.links.GetByID(linkID)
+	if err != nil {
+		return err
+	}
+	if link.UserID != user.ID {
+		return errors.New("forbidden")
+	}
+
+	if branchOverride != "" {
+		link.BranchOverride = branchOverride
+	}
+
+	if repoExternalID != "" {
+		repo, err := s.repos.GetByExternalID(models.ScmProviderGithub, repoExternalID)
+		if err != nil {
+			return err
+		}
+		link.RepositoryID = repo.ID
+	}
+
 	link.LastSyncedAt = nil
 	link.SyncStatus = "pending"
 	link.SyncError = ""
@@ -401,6 +486,7 @@ func (s *CommitService) UpdateToken(user *models.User, token string) error {
 		return err
 	}
 	account.AccessTokenEnc = enc
+	account.AuthType = models.ScmAuthTypePat
 	return s.accounts.Upsert(account)
 }
 
@@ -430,6 +516,34 @@ func (s *CommitService) UnlinkProject(user *models.User, project string, purge b
 	return s.links.DeleteByUserAndProject(user.ID, project)
 }
 
+// UnlinkByID removes a link by id.
+func (s *CommitService) UnlinkByID(user *models.User, linkID string, purge bool) error {
+	link, err := s.links.GetByID(linkID)
+	if err != nil {
+		return err
+	}
+	if link.UserID != user.ID {
+		return errors.New("forbidden")
+	}
+	repo, err := s.repos.GetByID(link.RepositoryID)
+	if err != nil {
+		return err
+	}
+
+	if purge {
+		if err := s.stats.DeleteByRepo(repo.ID); err != nil {
+			return err
+		}
+		if err := s.commits.DeleteByRepo(repo.ID); err != nil {
+			return err
+		}
+		if err := s.repos.Delete(repo); err != nil {
+			return err
+		}
+	}
+	return s.links.DeleteByUserAndProject(user.ID, link.Project)
+}
+
 func (s *CommitService) effectiveBranch(link *models.ProjectRepositoryLink, repo *models.ScmRepository) string {
 	if link.BranchOverride != "" {
 		return link.BranchOverride
@@ -440,6 +554,26 @@ func (s *CommitService) effectiveBranch(link *models.ProjectRepositoryLink, repo
 // SyncNow triggers an immediate sync for a given project link.
 func (s *CommitService) SyncNow(user *models.User, project string) error {
 	link, repo, account, err := s.ensureLink(user, project)
+	if err != nil {
+		return err
+	}
+	return s.Sync(link, account, repo)
+}
+
+// SyncByID triggers sync for link by id.
+func (s *CommitService) SyncByID(user *models.User, linkID string) error {
+	link, err := s.links.GetByID(linkID)
+	if err != nil {
+		return err
+	}
+	if link.UserID != user.ID {
+		return errors.New("forbidden")
+	}
+	repo, err := s.repos.GetByID(link.RepositoryID)
+	if err != nil {
+		return err
+	}
+	account, err := s.accounts.GetByUserAndProvider(user.ID, models.ScmProviderGithub)
 	if err != nil {
 		return err
 	}
@@ -558,6 +692,53 @@ func truncateHash(hash string) string {
 		return hash
 	}
 	return hash[:7]
+}
+
+// resolveAccountToken returns the SCM account and plain token.
+// If explicitToken is provided, the user's account is created/updated with that token.
+// Otherwise it loads the stored account and decrypts the token.
+func (s *CommitService) resolveAccountToken(user *models.User, explicitToken string) (*models.ScmAccount, string, error) {
+	if explicitToken != "" {
+		if err := s.UpdateToken(user, explicitToken); err != nil {
+			return nil, "", err
+		}
+		account, err := s.accounts.GetByUserAndProvider(user.ID, models.ScmProviderGithub)
+		return account, explicitToken, err
+	}
+
+	account, err := s.accounts.GetByUserAndProvider(user.ID, models.ScmProviderGithub)
+	if err != nil {
+		return nil, "", err
+	}
+	token, err := newTokenCipher().Decrypt(account.AccessTokenEnc)
+	if err != nil {
+		return nil, "", err
+	}
+	return account, token, nil
+}
+
+func mapGitHubRepo(repo *githubRepo) *models.ScmRepository {
+	id := uuid.Must(uuid.NewV4()).String()
+	externalID := fmt.Sprintf("%d", repo.ID)
+
+	return &models.ScmRepository{
+		ID:            id,
+		Provider:      models.ScmProviderGithub,
+		ExternalID:    externalID,
+		FullName:      repo.FullName,
+		Name:          repo.Name,
+		Owner:         repo.Owner.Login,
+		HTMLURL:       repo.HTMLURL,
+		APIURL:        repo.URL,
+		Description:   repo.Description,
+		Homepage:      repo.Homepage,
+		DefaultBranch: repo.DefaultBranch,
+		IsPrivate:     repo.Private,
+		IsFork:        repo.Fork,
+		StarCount:     repo.Stargazers,
+		ForkCount:     repo.Forks,
+		WatchCount:    repo.Watchers,
+	}
 }
 
 // Schedule periodic sync for stale project↔repo links.

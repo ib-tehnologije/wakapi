@@ -238,6 +238,7 @@ func main() {
 	avatarHandler := api.NewAvatarHandler()
 	activityHandler := api.NewActivityApiHandler(userService, activityService)
 	badgeHandler := api.NewBadgeHandler(userService, summaryService)
+	githubIntegrationHandler := api.NewGitHubIntegrationHandler(userService, commitService)
 	captchaHandler := api.NewCaptchaHandler()
 
 	// Compat Handlers
@@ -321,6 +322,7 @@ func main() {
 	avatarHandler.RegisterRoutes(apiRouter)
 	activityHandler.RegisterRoutes(apiRouter)
 	badgeHandler.RegisterRoutes(apiRouter)
+	githubIntegrationHandler.RegisterRoutes(apiRouter)
 	wakatimeV1StatusBarHandler.RegisterRoutes(apiRouter)
 	wakatimeV1AllHandler.RegisterRoutes(apiRouter)
 	wakatimeV1SummariesHandler.RegisterRoutes(apiRouter)

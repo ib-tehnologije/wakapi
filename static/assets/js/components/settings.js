@@ -5,6 +5,10 @@ PetiteVue.createApp({
     vibrantColorsEnabled: JSON.parse(
         localStorage.getItem("wakapi_vibrant_colors"),
     ) || false,
+    githubRepos: [],
+    githubRepoLoading: false,
+    githubPatMessage: "",
+    githubRepoMessage: "",
     labels: {},
     get tzOptions() {
         return [
@@ -77,7 +81,85 @@ PetiteVue.createApp({
                         button.textContent = original;
                     }, 8000); // fallback reset if page stays
                 });
+        });
+    },
+    apiBase() {
+        const raw = window.__BASE_PATH__ || "";
+        const trimmed = raw === "/" ? "" : raw.replace(/\/$/, "");
+        return `${trimmed}/api`;
+    },
+    async saveGithubPat() {
+        const tokenInput = document.getElementById("github_pat_once");
+        const token = tokenInput?.value.trim();
+        if (!token) {
+            alert("Please paste a PAT first.");
+            return;
+        }
+        this.githubPatMessage = "";
+        try {
+            const res = await fetch(`${this.apiBase()}/integrations/github/pat`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({token}),
             });
+            if (!res.ok) {
+                throw new Error(await res.text());
+            }
+            this.githubPatMessage = "Token saved. You can now load repos.";
+            tokenInput.value = "";
+        } catch (e) {
+            console.error(e);
+            alert("Failed to save token. Check console for details.");
+        }
+    },
+    async loadGithubRepos() {
+        this.githubRepoLoading = true;
+        this.githubRepos = [];
+        this.githubRepoMessage = "";
+        try {
+            const res = await fetch(`${this.apiBase()}/integrations/github/repos`);
+            if (!res.ok) {
+                throw new Error(await res.text());
+            }
+            this.githubRepos = await res.json();
+        } catch (e) {
+            console.error(e);
+            alert("Failed to load repositories. Did you save a PAT?");
+        } finally {
+            this.githubRepoLoading = false;
+        }
+    },
+    async linkGithubRepo() {
+        const project = document.getElementById("github_project_picker")?.value;
+        const repoId = document.getElementById("github_repo_picker")?.value;
+        const branch = document.getElementById("github_branch_picker")?.value || "";
+        if (!project || !repoId || this.githubRepos.length === 0) {
+            alert("Select a project and repository first.");
+            return;
+        }
+        this.githubRepoMessage = "";
+        try {
+            const res = await fetch(`${this.apiBase()}/integrations/github/links`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    project,
+                    repository_id: repoId,
+                    branch_override: branch,
+                }),
+            });
+            if (!res.ok) {
+                throw new Error(await res.text());
+            }
+            this.githubRepoMessage = "Linked. First sync is running…";
+            // best effort refresh after a short delay
+            setTimeout(() => window.location.reload(), 800);
+        } catch (e) {
+            console.error(e);
+            alert("Failed to link repository. Check token permissions and repo access.");
+        }
     },
     onToggleVibrantColors() {
         localStorage.setItem("wakapi_vibrant_colors", this.vibrantColorsEnabled);

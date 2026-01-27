@@ -19,6 +19,16 @@ func (r *ScmRepositoryRepository) Upsert(repo *models.ScmRepository) error {
 		Create(repo).Error
 }
 
+func (r *ScmRepositoryRepository) GetByExternalID(provider, externalID string) (*models.ScmRepository, error) {
+	var repo models.ScmRepository
+	if err := r.db.
+		Where(&models.ScmRepository{Provider: provider, ExternalID: externalID}).
+		First(&repo).Error; err != nil {
+		return nil, err
+	}
+	return &repo, nil
+}
+
 func (r *ScmRepositoryRepository) GetByProviderAndFullName(provider, fullName string) (*models.ScmRepository, error) {
 	var repo models.ScmRepository
 	if err := r.db.

@@ -26,6 +26,9 @@ type stubCommitService struct {
 func (s *stubCommitService) LinkProject(*models.User, string, string, string, string) (*models.ProjectRepositoryLink, error) {
 	return nil, nil
 }
+func (s *stubCommitService) LinkProjectWithRepo(*models.User, string, string, string) (*models.ProjectRepositoryLink, error) {
+	return nil, nil
+}
 func (s *stubCommitService) GetCommits(*models.User, string, string, string, int, int) (*services.CommitsResult, error) {
 	return s.list, s.err
 }
@@ -35,11 +38,19 @@ func (s *stubCommitService) GetCommit(*models.User, string, string, string, stri
 func (s *stubCommitService) ListLinks(*models.User) ([]*services.ProjectLinkInfo, error) {
 	return nil, nil
 }
+func (s *stubCommitService) ListRepos(*models.User, string, int, int) ([]*models.ScmRepository, error) {
+	return nil, nil
+}
 func (s *stubCommitService) Schedule()                                             {}
 func (s *stubCommitService) UpdateLink(*models.User, string, string, string) error { return nil }
-func (s *stubCommitService) UnlinkProject(*models.User, string, bool) error        { return nil }
-func (s *stubCommitService) UpdateToken(*models.User, string) error                { return nil }
-func (s *stubCommitService) SyncNow(*models.User, string) error                    { return nil }
+func (s *stubCommitService) UpdateLinkByID(*models.User, string, string, string) error {
+	return nil
+}
+func (s *stubCommitService) UnlinkProject(*models.User, string, bool) error { return nil }
+func (s *stubCommitService) UnlinkByID(*models.User, string, bool) error    { return nil }
+func (s *stubCommitService) UpdateToken(*models.User, string) error         { return nil }
+func (s *stubCommitService) SyncNow(*models.User, string) error             { return nil }
+func (s *stubCommitService) SyncByID(*models.User, string) error            { return nil }
 
 func TestCommitsHandler_GetMany(t *testing.T) {
 	config.Set(config.Empty())

@@ -21,6 +21,7 @@ type ScmAccount struct {
 	AuthType        string      `gorm:"not null; size:32" json:"auth_type"`
 	AccessTokenEnc  string      `gorm:"type:text" json:"access_token_enc"`
 	RefreshTokenEnc string      `gorm:"type:text" json:"refresh_token_enc"`
+	InstallationID  string      `gorm:"size:128" json:"installation_id"`
 	ExpiresAt       *CustomTime `json:"expires_at"`
 	ProviderUserID  string      `gorm:"size:128" json:"provider_user_id"`
 	ProviderLogin   string      `gorm:"size:255" json:"provider_login"`

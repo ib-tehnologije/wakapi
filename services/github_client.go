@@ -137,3 +137,52 @@ func (c *GitHubClient) addAuth(req *http.Request) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 }
+
+// ListRepos lists repositories accessible to the current token.
+func (c *GitHubClient) ListRepos(ctx context.Context, page, perPage int) ([]*githubRepo, error) {
+	u, _ := url.Parse(fmt.Sprintf("%s/user/repos", c.baseURL))
+	q := u.Query()
+	q.Set("affiliation", "owner,collaborator,organization_member")
+	if page > 0 {
+		q.Set("page", fmt.Sprintf("%d", page))
+	}
+	if perPage > 0 {
+		q.Set("per_page", fmt.Sprintf("%d", perPage))
+	}
+	u.RawQuery = q.Encode()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	c.addAuth(req)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("github list repos failed: %s", resp.Status)
+	}
+	var repos []*githubRepo
+	if err := json.NewDecoder(resp.Body).Decode(&repos); err != nil {
+		return nil, err
+	}
+	return repos, nil
+}
+
+// GetRepoByID retrieves repository by numeric id.
+func (c *GitHubClient) GetRepoByID(ctx context.Context, id string) (*githubRepo, error) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/repositories/%s", c.baseURL, id), nil)
+	c.addAuth(req)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("github get repo by id failed: %s", resp.Status)
+	}
+	var repo githubRepo
+	if err := json.NewDecoder(resp.Body).Decode(&repo); err != nil {
+		return nil, err
+	}
+	return &repo, nil
+}

@@ -31,6 +31,14 @@ func (r *ProjectRepositoryLinkRepository) GetByUserAndProject(userID, project st
 	return &link, nil
 }
 
+func (r *ProjectRepositoryLinkRepository) GetByID(id string) (*models.ProjectRepositoryLink, error) {
+	var link models.ProjectRepositoryLink
+	if err := r.db.Where("id = ?", id).First(&link).Error; err != nil {
+		return nil, err
+	}
+	return &link, nil
+}
+
 func (r *ProjectRepositoryLinkRepository) DeleteByUserAndProject(userID, project string) error {
 	return r.db.
 		Where(&models.ProjectRepositoryLink{UserID: userID, Project: project}).
