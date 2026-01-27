@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -30,6 +31,8 @@ func (h *GitHubIntegrationHandler) RegisterRoutes(router chi.Router) {
 	r.Use(middlewares.NewAuthenticateMiddleware(h.userSrvc).Handler)
 
 	r.Post("/pat", h.PostPAT)
+	r.Get("/pat", h.GetPAT)
+	r.Delete("/pat", h.DeletePAT)
 	r.Get("/repos", h.GetRepos)
 	r.Post("/links", h.PostLink)
 	r.Put("/links/{id}", h.PutLink)
@@ -88,6 +91,16 @@ func (h *GitHubIntegrationHandler) GetRepos(w http.ResponseWriter, r *http.Reque
 
 	repos, err := h.commitSrvc.ListRepos(user, search, page, perPage)
 	if err != nil {
+		if errors.Is(err, services.ErrNoStoredToken) {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte("no stored token"))
+			return
+		}
+		if errors.Is(err, services.ErrDecryptToken) {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte("stored token invalid; please save a new one"))
+			return
+		}
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("failed to list repositories"))
 		conf.Log().Request(r).Warn("failed to list github repos", "user", user.ID, "error", err)
@@ -120,6 +133,32 @@ func (h *GitHubIntegrationHandler) GetRepos(w http.ResponseWriter, r *http.Reque
 	}
 
 	helpers.RespondJSON(w, r, http.StatusOK, resp)
+}
+
+func (h *GitHubIntegrationHandler) GetPAT(w http.ResponseWriter, r *http.Request) {
+	user := middlewares.GetPrincipal(r)
+
+	exists, err := h.commitSrvc.HasToken(user)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("failed to check token"))
+		conf.Log().Request(r).Warn("failed to check github token", "user", user.ID, "error", err)
+		return
+	}
+
+	helpers.RespondJSON(w, r, http.StatusOK, map[string]bool{"exists": exists})
+}
+
+func (h *GitHubIntegrationHandler) DeletePAT(w http.ResponseWriter, r *http.Request) {
+	user := middlewares.GetPrincipal(r)
+
+	if err := h.commitSrvc.DeleteToken(user); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("failed to delete token"))
+		conf.Log().Request(r).Warn("failed to delete github token", "user", user.ID, "error", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type linkRequest struct {

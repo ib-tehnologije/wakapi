@@ -16,12 +16,18 @@ import (
 	"github.com/muety/wakapi/helpers"
 	"github.com/muety/wakapi/models"
 	"github.com/muety/wakapi/repositories"
+	"gorm.io/gorm"
 )
 
 const (
 	defaultCommitPageSize = 50
 	linkSyncStaleAfter    = 15 * time.Minute
 	lookbackWindow        = 30 * 24 * time.Hour
+)
+
+var (
+	ErrNoStoredToken = errors.New("no stored github token")
+	ErrDecryptToken  = errors.New("failed to decrypt stored github token")
 )
 
 type CommitsResult struct {
@@ -514,6 +520,30 @@ func (s *CommitService) UpdateToken(user *models.User, token string) error {
 	return nil
 }
 
+// DeleteToken removes the stored PAT (if any) for the user.
+func (s *CommitService) DeleteToken(user *models.User) error {
+	if err := s.accounts.DeleteByUserAndProvider(user.ID, models.ScmProviderGithub); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	s.invalidateRepoCache(user.ID)
+	return nil
+}
+
+// HasToken reports whether a GitHub token is stored for the user.
+func (s *CommitService) HasToken(user *models.User) (bool, error) {
+	_, err := s.accounts.GetByUserAndProvider(user.ID, models.ScmProviderGithub)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	return false, err
+}
+
 // UnlinkProject removes the link between a project and repository.
 func (s *CommitService) UnlinkProject(user *models.User, project string, purge bool) error {
 	link, err := s.links.GetByUserAndProject(user.ID, project)
@@ -732,11 +762,14 @@ func (s *CommitService) resolveAccountToken(user *models.User, explicitToken str
 
 	account, err := s.accounts.GetByUserAndProvider(user.ID, models.ScmProviderGithub)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, "", ErrNoStoredToken
+		}
 		return nil, "", err
 	}
 	token, err := newTokenCipher().Decrypt(account.AccessTokenEnc)
 	if err != nil {
-		return nil, "", err
+		return nil, "", ErrDecryptToken
 	}
 	return account, token, nil
 }

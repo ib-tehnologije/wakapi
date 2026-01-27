@@ -5,6 +5,7 @@ PetiteVue.createApp({
     vibrantColorsEnabled: JSON.parse(
         localStorage.getItem("wakapi_vibrant_colors"),
     ) || false,
+    githubPatExists: typeof githubPatStored !== "undefined" ? githubPatStored : false,
     githubRepos: [],
     githubRepoLoading: false,
     githubPatMessage: "",
@@ -108,24 +109,63 @@ PetiteVue.createApp({
             if (!res.ok) {
                 throw new Error(await res.text());
             }
-            this.githubPatMessage = "Token saved. You can now load repos.";
+            this.githubPatExists = true;
+            this.githubPatMessage = "Token saved. Reusing it automatically.";
             tokenInput.value = "";
+            // auto-refresh repos after saving
+            this.loadGithubRepos();
         } catch (e) {
             console.error(e);
             alert("Failed to save token. Check console for details.");
         }
     },
+    async removeGithubPat() {
+        if (!confirm("Remove the stored GitHub token?")) {
+            return;
+        }
+        this.githubPatMessage = "";
+        try {
+            const res = await fetch(`${this.apiBase()}/integrations/github/pat`, {
+                method: "DELETE",
+            });
+            if (!res.ok) {
+                throw new Error(await res.text());
+            }
+            this.githubPatExists = false;
+            this.githubRepos = [];
+            this.githubSuggestedId = "";
+            this.githubRepoMessage = "Token removed. Save a new PAT to list repos.";
+        } catch (e) {
+            console.error(e);
+            alert("Failed to remove token. Check console for details.");
+        }
+    },
     async loadGithubRepos() {
+        if (this.githubRepoLoading) return;
+        if (!this.githubPatExists) {
+            this.githubRepoMessage = "Save a GitHub PAT first.";
+            return;
+        }
         this.githubRepoLoading = true;
         this.githubRepos = [];
         this.githubRepoMessage = "";
         try {
             const res = await fetch(`${this.apiBase()}/integrations/github/repos?all=true`);
             if (!res.ok) {
-                throw new Error(await res.text());
+                const body = await res.text();
+                if (res.status === 401) {
+                    this.githubPatExists = false;
+                    this.githubRepoMessage = body || "Token missing or invalid. Please save a new PAT.";
+                    alert(this.githubRepoMessage);
+                    return;
+                }
+                throw new Error(body);
             }
             this.githubRepos = await res.json();
             this.updateSuggestedRepo();
+            if (this.githubRepos.length > 0) {
+                this.githubRepoMessage = `Loaded ${this.githubRepos.length} repositories.`;
+            }
         } catch (e) {
             console.error(e);
             alert("Failed to load repositories. Did you save a PAT?");
@@ -202,6 +242,9 @@ PetiteVue.createApp({
         const projectSelect = document.getElementById("github_project_picker");
         if (projectSelect) {
             projectSelect.addEventListener("change", () => this.updateSuggestedRepo());
+        }
+        if (this.githubPatExists) {
+            this.loadGithubRepos();
         }
     },
 }).mount("#settings-page");

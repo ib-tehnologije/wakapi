@@ -49,6 +49,8 @@ func (s *stubCommitService) UpdateLinkByID(*models.User, string, string, string)
 func (s *stubCommitService) UnlinkProject(*models.User, string, bool) error { return nil }
 func (s *stubCommitService) UnlinkByID(*models.User, string, bool) error    { return nil }
 func (s *stubCommitService) UpdateToken(*models.User, string) error         { return nil }
+func (s *stubCommitService) DeleteToken(*models.User) error                 { return nil }
+func (s *stubCommitService) HasToken(*models.User) (bool, error)            { return true, nil }
 func (s *stubCommitService) SyncNow(*models.User, string) error             { return nil }
 func (s *stubCommitService) SyncByID(*models.User, string) error            { return nil }
 

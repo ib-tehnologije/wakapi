@@ -1145,7 +1145,14 @@ func (h *SettingsHandler) buildViewModel(r *http.Request, w http.ResponseWriter,
 
 	// GitHub links
 	githubLinks := make([]*view.GitHubLink, 0)
+	githubPatStored := false
 	if h.commitSrvc != nil {
+		if has, err := h.commitSrvc.HasToken(user); err != nil {
+			conf.Log().Request(r).Warn("failed to check github pat", "user", user.ID, "error", err)
+		} else {
+			githubPatStored = has
+		}
+
 		if links, err := h.commitSrvc.ListLinks(user); err != nil {
 			conf.Log().Request(r).Warn("failed to load github links", "user", user.ID, "error", err)
 		} else {
@@ -1231,6 +1238,7 @@ func (h *SettingsHandler) buildViewModel(r *http.Request, w http.ResponseWriter,
 		InviteLink:          inviteLink,
 		ApiKeys:             combinedApiKeys,
 		GitHubLinks:         githubLinks,
+		GitHubPatStored:     githubPatStored,
 	}
 
 	// readme card params

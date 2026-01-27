@@ -20,6 +20,7 @@ type SettingsViewModel struct {
 	ReadmeCardCustomTitle string
 	ApiKeys               []*SettingsApiKeys
 	GitHubLinks           []*GitHubLink
+	GitHubPatStored       bool
 }
 
 type SettingsVMCombinedAlias struct {

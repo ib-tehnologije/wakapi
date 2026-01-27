@@ -10,6 +10,7 @@
     const userTzOffset = {{ localTZOffset.Hours }}
     const signPrefix = userTzOffset >= 0 ? '+' : ''
     const defaultTzOption = { value: 'Local', text: `Local server time (UTC${signPrefix}${userTzOffset})` }
+    const githubPatStored = {{ .GitHubPatStored }}
 </script>
 <script type="module" src="assets/js/components/settings.js"></script>
 
@@ -766,6 +767,10 @@
                         <button type="button" class="btn-primary" @click="saveGithubPat">Save token</button>
                         <span class="text-sm text-muted" v-if="githubPatMessage" v-text="githubPatMessage"></span>
                     </div>
+                    <div class="flex items-center gap-3 mt-2" v-if="githubPatExists">
+                        <span class="text-xs text-muted">Stored token available and reused automatically.</span>
+                        <button type="button" class="py-1 px-3 rounded bg-card hover:bg-focused text-primary text-xs" @click="removeGithubPat">Remove token</button>
+                    </div>
                     <p class="text-sm text-muted mt-2">
                         Classic PAT scopes: <code class="font-mono">repo</code> (for private) and <code class="font-mono">read:org</code> (org repos) + SSO approval. Fine‑grained PAT: <code class="font-mono">Contents: Read</code> on all repos you want listed.
                     </p>
@@ -779,7 +784,7 @@
                         </div>
                         <button type="button" class="btn-primary" @click="loadGithubRepos" :disabled="githubRepoLoading">
                             <span v-if="githubRepoLoading">Loading…</span>
-                            <span v-else>Load repos</span>
+                            <span v-else v-text="githubRepos.length ? 'Refresh repos' : 'Load repos'"></span>
                         </button>
                     </div>
                     <div class="grid md:grid-cols-2 gap-4">
@@ -794,7 +799,8 @@
                         <div class="flex flex-col">
                             <label class="font-semibold text-foreground text-sm" for="github_repo_picker">GitHub repository</label>
                             <select id="github_repo_picker" class="select-default" :disabled="githubRepos.length === 0">
-                                <option v-if="githubRepos.length === 0">Click “Load repos” first</option>
+                                <option v-if="githubRepos.length === 0 && !githubPatExists && !githubRepoLoading">Save a PAT to load repositories</option>
+                                <option v-else-if="githubRepos.length === 0">Loading repositories…</option>
                                 <option v-for="repo in githubRepos" :key="repo.id" :value="repo.id" :selected="repo.id === githubSuggestedId" v-text="repo.full_name"></option>
                             </select>
                             <small class="text-muted" v-if="githubRepos.length > 0" v-text="'Loaded ' + githubRepos.length + ' repos'"></small>

@@ -194,6 +194,8 @@ type ICommitService interface {
 	UnlinkProject(*models.User, string, bool) error
 	UnlinkByID(*models.User, string, bool) error
 	UpdateToken(*models.User, string) error
+	DeleteToken(*models.User) error
+	HasToken(*models.User) (bool, error)
 	SyncNow(*models.User, string) error
 	SyncByID(*models.User, string) error
 	Schedule()
