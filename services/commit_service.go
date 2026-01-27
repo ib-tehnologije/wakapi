@@ -132,10 +132,12 @@ func (s *CommitService) LinkProject(user *models.User, project, fullName, token,
 		return nil, err
 	}
 
-	// trigger initial sync
-	if err := s.Sync(link, account, repoModel); err != nil {
-		slog.Warn("initial sync failed", "error", err)
-	}
+	// trigger initial sync in background to avoid blocking UI
+	go func() {
+		if err := s.Sync(link, account, repoModel); err != nil {
+			slog.Warn("initial sync failed", "error", err)
+		}
+	}()
 
 	return link, nil
 }
@@ -180,9 +182,11 @@ func (s *CommitService) LinkProjectWithRepo(user *models.User, project, repoExte
 		return nil, err
 	}
 
-	if err := s.Sync(link, account, repoModel); err != nil {
-		slog.Warn("initial sync failed", "error", err)
-	}
+	go func() {
+		if err := s.Sync(link, account, repoModel); err != nil {
+			slog.Warn("initial sync failed", "error", err)
+		}
+	}()
 	return link, nil
 }
 
@@ -200,7 +204,7 @@ func (s *CommitService) Sync(link *models.ProjectRepositoryLink, account *models
 
 	client := NewGitHubClient(token)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	// determine cutoff hash to stop early
@@ -503,7 +507,11 @@ func (s *CommitService) UpdateToken(user *models.User, token string) error {
 	}
 	account.AccessTokenEnc = enc
 	account.AuthType = models.ScmAuthTypePat
-	return s.accounts.Upsert(account)
+	if err := s.accounts.Upsert(account); err != nil {
+		return err
+	}
+	s.invalidateRepoCache(user.ID)
+	return nil
 }
 
 // UnlinkProject removes the link between a project and repository.
@@ -778,6 +786,12 @@ func (s *CommitService) setCachedRepos(userID string, repos []*githubRepo) {
 	s.repoCacheMu.Lock()
 	defer s.repoCacheMu.Unlock()
 	s.repoCache[userID] = repoCacheEntry{repos: repos, fetchedAt: time.Now()}
+}
+
+func (s *CommitService) invalidateRepoCache(userID string) {
+	s.repoCacheMu.Lock()
+	defer s.repoCacheMu.Unlock()
+	delete(s.repoCache, userID)
 }
 
 func (s *CommitService) fetchAllRepos(ctx context.Context, client *GitHubClient) ([]*githubRepo, error) {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/muety/wakapi/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type CommitStatRepository struct {
@@ -17,7 +18,10 @@ func NewCommitStatRepository(db *gorm.DB) *CommitStatRepository {
 
 func (r *CommitStatRepository) Upsert(stat *models.CommitStat) error {
 	return r.db.
-		Clauses(clauseOnConflictDoUpdateAll()).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "user_id"}, {Name: "project"}, {Name: "branch"}, {Name: "commit_hash"}},
+			DoUpdates: clause.AssignmentColumns([]string{"total_seconds", "human_readable_total", "human_readable_total_with_second", "calculated_at", "algo_version", "dirty", "updated_at"}),
+		}).
 		Create(stat).Error
 }
 

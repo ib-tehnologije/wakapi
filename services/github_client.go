@@ -19,7 +19,7 @@ type GitHubClient struct {
 func NewGitHubClient(token string) *GitHubClient {
 	return &GitHubClient{
 		baseURL: "https://api.github.com",
-		client:  &http.Client{Timeout: 15 * time.Second},
+		client:  &http.Client{Timeout: 60 * time.Second},
 		token:   token,
 	}
 }
