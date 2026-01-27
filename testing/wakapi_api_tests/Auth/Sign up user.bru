@@ -18,11 +18,11 @@ body:form-urlencoded {
   password_repeat: testpassword
 }
 
+script:pre-request {
+  req.setMaxRedirects(0)
+}
+
 assert {
   res.status: eq 302
   res.headers['location']: eq /
-}
-
-script:pre-request {
-  req.setMaxRedirects(0)
 }
