@@ -73,6 +73,20 @@ func TestSmtpTestSuite(t *testing.T) {
 	suite.Run(t, new(SmtpTestSuite))
 }
 
+// retryTLS retries a send operation to reduce flakiness when smtp4dev restarts between TLS mode changes.
+func retryTLS(f func() error) error {
+	const attempts = 3
+	for i := 0; i < attempts; i++ {
+		if err := f(); err == nil {
+			return nil
+		} else if i == attempts-1 {
+			return err
+		}
+		time.Sleep(800 * time.Millisecond)
+	}
+	return nil
+}
+
 func (suite *SmtpTestSuite) TestSMTPSendingService_SendPlain() {
 	if err := suite.smtp4Dev.SetNoTls(); err != nil {
 		suite.Error(err)
@@ -97,7 +111,7 @@ func (suite *SmtpTestSuite) TestSMTPSendingService_SendTLS() {
 	cfg.TLS = true
 
 	sut := NewSMTPSendingService(cfg)
-	err := sut.Send(createTestMail())
+	err := retryTLS(func() error { return sut.Send(createTestMail()) })
 
 	msgCount, _ := suite.smtp4Dev.CountMessages()
 	assert.Nil(suite.T(), err)
@@ -113,7 +127,7 @@ func (suite *SmtpTestSuite) TestSMTPSendingService_SendStartTLS() {
 	cfg.TLS = false
 
 	sut := NewSMTPSendingService(cfg)
-	err := sut.Send(createTestMail())
+	err := retryTLS(func() error { return sut.Send(createTestMail()) })
 
 	msgCount, _ := suite.smtp4Dev.CountMessages()
 	assert.Nil(suite.T(), err)
