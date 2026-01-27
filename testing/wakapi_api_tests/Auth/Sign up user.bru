@@ -26,3 +26,8 @@ assert {
   res.status: eq 302
   res.headers['location']: eq /
 }
+
+settings {
+  followRedirects: false
+  maxRedirects: 0
+}
