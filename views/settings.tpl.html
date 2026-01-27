@@ -766,6 +766,9 @@
                         <button type="button" class="btn-primary" @click="saveGithubPat">Save token</button>
                         <span class="text-sm text-muted" v-if="githubPatMessage" v-text="githubPatMessage"></span>
                     </div>
+                    <p class="text-sm text-muted mt-2">
+                        Classic PAT scopes: <code class="font-mono">repo</code> (for private) and <code class="font-mono">read:org</code> (org repos) + SSO approval. Fine‑grained PAT: <code class="font-mono">Contents: Read</code> on all repos you want listed.
+                    </p>
                 </div>
 
                 <div class="border border-focused rounded p-4 mb-8">
