@@ -32,14 +32,14 @@ func (h *MiscHandler) GetUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		routeutils.SetError(r, w, "missing token parameter")
-		http.Redirect(w, r, fmt.Sprintf("%s", h.config.Server.BasePath), http.StatusFound)
+		http.Redirect(w, r, fmt.Sprintf("%s", h.config.Server.BasePathOrRoot()), http.StatusFound)
 		return
 	}
 
 	user, err := h.userSrvc.GetUserByUnsubscribeToken(token)
 	if err != nil {
 		routeutils.SetError(r, w, "invalid token parameter")
-		http.Redirect(w, r, fmt.Sprintf("%s", h.config.Server.BasePath), http.StatusFound)
+		http.Redirect(w, r, fmt.Sprintf("%s", h.config.Server.BasePathOrRoot()), http.StatusFound)
 		return
 	}
 
@@ -47,10 +47,10 @@ func (h *MiscHandler) GetUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	if _, err := h.userSrvc.Update(user); err != nil {
 		conf.Log().Request(r).Error("failed to unsubscribe user from weekly reports", "user", user.ID, "error", err)
 		routeutils.SetError(r, w, "failed to update user preferences")
-		http.Redirect(w, r, fmt.Sprintf("%s", h.config.Server.BasePath), http.StatusFound)
+		http.Redirect(w, r, fmt.Sprintf("%s", h.config.Server.BasePathOrRoot()), http.StatusFound)
 		return
 	}
 
 	routeutils.SetSuccess(r, w, "successfully unsubscribed from weekly reports")
-	http.Redirect(w, r, fmt.Sprintf("%s", h.config.Server.BasePath), http.StatusFound)
+	http.Redirect(w, r, fmt.Sprintf("%s", h.config.Server.BasePathOrRoot()), http.StatusFound)
 }

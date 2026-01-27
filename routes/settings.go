@@ -321,7 +321,7 @@ func (h *SettingsHandler) actionChangeUserId(w http.ResponseWriter, r *http.Requ
 
 	routeutils.SetSuccess(r, w, fmt.Sprintf("Successfully changed your username to %s, please log back in.", newUserId))
 	http.SetCookie(w, h.config.GetClearCookie(models.AuthCookieKey))
-	http.Redirect(w, r, h.config.Server.BasePath, http.StatusFound)
+	http.Redirect(w, r, h.config.Server.BasePathOrRoot(), http.StatusFound)
 	return actionResult{-1, "", "", nil}
 }
 
@@ -835,7 +835,7 @@ func (h *SettingsHandler) actionDeleteUser(w http.ResponseWriter, r *http.Reques
 
 	routeutils.SetSuccess(r, w, "Your account will be deleted in a few minutes. Sorry to see you go.")
 	http.SetCookie(w, h.config.GetClearCookie(models.AuthCookieKey))
-	http.Redirect(w, r, h.config.Server.BasePath, http.StatusFound)
+	http.Redirect(w, r, h.config.Server.BasePathOrRoot(), http.StatusFound)
 	return actionResult{-1, "", "", nil}
 }
 

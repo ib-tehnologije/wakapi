@@ -172,6 +172,14 @@ type serverConfig struct {
 	TlsKeyPath       string `yaml:"tls_key_path" default:"" env:"WAKAPI_TLS_KEY_PATH"`
 }
 
+func (c *serverConfig) BasePathOrRoot() string {
+	if c.BasePath == "" {
+		return "/"
+	}
+
+	return c.BasePath
+}
+
 type subscriptionsConfig struct {
 	Enabled              bool   `yaml:"enabled" default:"false" env:"WAKAPI_SUBSCRIPTIONS_ENABLED"`
 	ExpiryNotifications  bool   `yaml:"expiry_notifications" default:"true" env:"WAKAPI_SUBSCRIPTIONS_EXPIRY_NOTIFICATIONS"`
