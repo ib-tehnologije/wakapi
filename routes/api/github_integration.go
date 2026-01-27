@@ -75,6 +75,16 @@ func (h *GitHubIntegrationHandler) GetRepos(w http.ResponseWriter, r *http.Reque
 	search := q.Get("search")
 	page, _ := strconv.Atoi(q.Get("page"))
 	perPage, _ := strconv.Atoi(q.Get("per_page"))
+	all := q.Get("all") == "true"
+
+	if all {
+		page = 0
+		perPage = 0
+	} else {
+		if perPage <= 0 {
+			perPage = 100
+		}
+	}
 
 	repos, err := h.commitSrvc.ListRepos(user, search, page, perPage)
 	if err != nil {

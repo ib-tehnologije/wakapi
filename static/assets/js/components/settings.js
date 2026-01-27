@@ -119,7 +119,7 @@ PetiteVue.createApp({
         this.githubRepos = [];
         this.githubRepoMessage = "";
         try {
-            const res = await fetch(`${this.apiBase()}/integrations/github/repos`);
+            const res = await fetch(`${this.apiBase()}/integrations/github/repos?all=true`);
             if (!res.ok) {
                 throw new Error(await res.text());
             }

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofrs/uuid/v5"
@@ -52,6 +53,8 @@ type CommitService struct {
 	heartbeats  IHeartbeatService
 	durations   IDurationService
 	queue       *artifex.Dispatcher
+	repoCache   map[string]repoCacheEntry
+	repoCacheMu sync.RWMutex
 }
 
 // ProjectLinkInfo bundles a link with its repository metadata for UI consumption.
@@ -81,6 +84,7 @@ func NewCommitService(
 		heartbeats:  heartbeatService,
 		durations:   durationService,
 		queue:       config.GetQueue(config.QueueDefault),
+		repoCache:   make(map[string]repoCacheEntry),
 	}
 }
 
@@ -390,30 +394,42 @@ func (s *CommitService) ListRepos(user *models.User, search string, page, perPag
 		return nil, err
 	}
 
+	all := perPage == 0 && page == 0 // signal to fetch all pages when handler requests all=true
+
+	// cache first
+	if all {
+		if cached := s.getCachedRepos(user.ID); cached != nil {
+			return filterRepos(cached, search), nil
+		}
+	}
+
 	client := NewGitHubClient(plainToken)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	if perPage <= 0 || perPage > 100 {
-		perPage = 30
-	}
-	if page <= 0 {
-		page = 1
-	}
-
-	repos, err := client.ListRepos(ctx, page, perPage)
-	if err != nil {
-		return nil, err
-	}
-
-	results := make([]*models.ScmRepository, 0, len(repos))
-	for _, r := range repos {
-		if search != "" && !strings.Contains(strings.ToLower(r.FullName), strings.ToLower(search)) {
-			continue
+	var repos []*githubRepo
+	if all {
+		r, err := s.fetchAllRepos(ctx, client)
+		if err != nil {
+			return nil, err
 		}
-		results = append(results, mapGitHubRepo(r))
+		repos = r
+		s.setCachedRepos(user.ID, repos)
+	} else {
+		if perPage <= 0 || perPage > 100 {
+			perPage = 30
+		}
+		if page <= 0 {
+			page = 1
+		}
+		r, err := client.ListRepos(ctx, page, perPage)
+		if err != nil {
+			return nil, err
+		}
+		repos = r
 	}
-	return results, nil
+
+	return filterRepos(repos, search), nil
 }
 
 // UpdateLink updates the branch override and/or token (if provided) for a linked project.
@@ -739,6 +755,62 @@ func mapGitHubRepo(repo *githubRepo) *models.ScmRepository {
 		ForkCount:     repo.Forks,
 		WatchCount:    repo.Watchers,
 	}
+}
+
+type repoCacheEntry struct {
+	repos     []*githubRepo
+	fetchedAt time.Time
+}
+
+const repoCacheTTL = 5 * time.Minute
+
+func (s *CommitService) getCachedRepos(userID string) []*githubRepo {
+	s.repoCacheMu.RLock()
+	defer s.repoCacheMu.RUnlock()
+	entry, ok := s.repoCache[userID]
+	if !ok || time.Since(entry.fetchedAt) > repoCacheTTL {
+		return nil
+	}
+	return entry.repos
+}
+
+func (s *CommitService) setCachedRepos(userID string, repos []*githubRepo) {
+	s.repoCacheMu.Lock()
+	defer s.repoCacheMu.Unlock()
+	s.repoCache[userID] = repoCacheEntry{repos: repos, fetchedAt: time.Now()}
+}
+
+func (s *CommitService) fetchAllRepos(ctx context.Context, client *GitHubClient) ([]*githubRepo, error) {
+	all := []*githubRepo{}
+	page := 1
+	perPage := 100
+
+	for {
+		repos, err := client.ListRepos(ctx, page, perPage)
+		if err != nil {
+			return nil, err
+		}
+		if len(repos) == 0 {
+			break
+		}
+		all = append(all, repos...)
+		if len(repos) < perPage {
+			break
+		}
+		page++
+	}
+	return all, nil
+}
+
+func filterRepos(repos []*githubRepo, search string) []*models.ScmRepository {
+	result := make([]*models.ScmRepository, 0, len(repos))
+	for _, r := range repos {
+		if search != "" && !strings.Contains(strings.ToLower(r.FullName), strings.ToLower(search)) {
+			continue
+		}
+		result = append(result, mapGitHubRepo(r))
+	}
+	return result
 }
 
 // Schedule periodic sync for stale project↔repo links.
