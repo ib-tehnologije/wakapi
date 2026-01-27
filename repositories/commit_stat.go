@@ -39,6 +39,7 @@ func (r *CommitStatRepository) MarkDirtyByUserProjectAfter(userID, project strin
 func (r *CommitStatRepository) GetByUserProjectBranch(userID, project, branch string, limit, offset int) ([]*models.CommitStat, int64, error) {
 	var stats []*models.CommitStat
 	q := r.db.
+		Model(&models.CommitStat{}).
 		Where("user_id = ? AND project = ? AND branch = ?", userID, project, branch).
 		Order("calculated_at DESC")
 	var total int64
