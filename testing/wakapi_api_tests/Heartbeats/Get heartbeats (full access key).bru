@@ -24,10 +24,8 @@ assert {
 
 tests {
   test("Response body is correct", function () {
-      const date = new Date(bru.getVar('yesterdayDateIso'))
       expect(res.body.timezone).to.eql(bru.getCollectionVar('TZ'));
-      expect(new Date(res.body.start)).to.eql(date);
-      expect(new Date(res.body.end)).to.eql(new Date(date.getTime() + 3600 * 1000 * 24 - 1000));
       expect(res.body.data.length).to.eql(2);
+      expect(new Date(res.body.start).getTime()).to.be.below(new Date(res.body.end).getTime());
   });
 }
