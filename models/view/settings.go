@@ -19,6 +19,7 @@ type SettingsViewModel struct {
 	InviteLink            string
 	ReadmeCardCustomTitle string
 	ApiKeys               []*SettingsApiKeys
+	GitHubLinks           []*GitHubLink
 }
 
 type SettingsVMCombinedAlias struct {
@@ -36,6 +37,16 @@ type SettingsApiKeys struct {
 	Name     string
 	Value    string
 	ReadOnly bool
+}
+
+type GitHubLink struct {
+	Project       string
+	Repository    string
+	RepositoryURL string
+	Branch        string
+	Status        string
+	Error         string
+	LastSyncedAt  *time.Time
 }
 
 func (s *SettingsViewModel) SubscriptionsEnabled() bool {

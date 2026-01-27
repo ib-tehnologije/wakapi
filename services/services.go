@@ -186,4 +186,10 @@ type ICommitService interface {
 	LinkProject(*models.User, string, string, string, string) (*models.ProjectRepositoryLink, error)
 	GetCommits(*models.User, string, string, string, int, int) (*CommitsResult, error)
 	GetCommit(*models.User, string, string, string, string) (*CommitResult, error)
+	ListLinks(*models.User) ([]*ProjectLinkInfo, error)
+	UpdateLink(*models.User, string, string, string) error
+	UnlinkProject(*models.User, string, bool) error
+	UpdateToken(*models.User, string) error
+	SyncNow(*models.User, string) error
+	Schedule()
 }

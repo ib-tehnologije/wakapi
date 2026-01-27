@@ -37,6 +37,17 @@ func (r *ProjectRepositoryLinkRepository) DeleteByUserAndProject(userID, project
 		Delete(&models.ProjectRepositoryLink{}).Error
 }
 
+func (r *ProjectRepositoryLinkRepository) ListByUser(userID string) ([]*models.ProjectRepositoryLink, error) {
+	var links []*models.ProjectRepositoryLink
+	if err := r.db.
+		Where(&models.ProjectRepositoryLink{UserID: userID}).
+		Order("updated_at DESC").
+		Find(&links).Error; err != nil {
+		return nil, err
+	}
+	return links, nil
+}
+
 func (r *ProjectRepositoryLinkRepository) ListStale(staleBefore time.Time, limit int) ([]*models.ProjectRepositoryLink, error) {
 	var links []*models.ProjectRepositoryLink
 	q := r.db.

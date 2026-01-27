@@ -166,6 +166,7 @@ type IScmRepositoryRepository interface {
 	Upsert(*models.ScmRepository) error
 	GetByProviderAndFullName(string, string) (*models.ScmRepository, error)
 	GetByID(string) (*models.ScmRepository, error)
+	Delete(*models.ScmRepository) error
 }
 
 type IProjectRepositoryLinkRepository interface {
@@ -173,6 +174,7 @@ type IProjectRepositoryLinkRepository interface {
 	Upsert(*models.ProjectRepositoryLink) error
 	GetByUserAndProject(string, string) (*models.ProjectRepositoryLink, error)
 	DeleteByUserAndProject(string, string) error
+	ListByUser(string) ([]*models.ProjectRepositoryLink, error)
 	ListStale(time.Time, int) ([]*models.ProjectRepositoryLink, error)
 }
 
@@ -182,6 +184,7 @@ type IScmCommitRepository interface {
 	GetLatestByRepoAndBranch(string, string) (*models.ScmCommit, error)
 	GetByRepoAndBranchAfter(string, string, time.Time, int, int) ([]*models.ScmCommit, error)
 	GetByRepoAndHash(string, string) (*models.ScmCommit, error)
+	DeleteByRepo(string) error
 }
 
 type ICommitStatRepository interface {
@@ -190,4 +193,5 @@ type ICommitStatRepository interface {
 	MarkDirtyByUserProjectAfter(string, string, time.Time) error
 	GetByUserProjectBranch(string, string, string, int, int) ([]*models.CommitStat, int64, error)
 	GetByUserProjectBranchAndHash(string, string, string, string) (*models.CommitStat, error)
+	DeleteByRepo(string) error
 }

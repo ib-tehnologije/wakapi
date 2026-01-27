@@ -42,6 +42,7 @@ type SettingsHandler struct {
 	keyValueSrvc        services.IKeyValueService
 	mailSrvc            services.IMailService
 	apiKeySrvc          services.IApiKeyService
+	commitSrvc          services.ICommitService
 	httpClient          *http.Client
 	aggregationLocks    map[string]bool
 }
@@ -71,6 +72,7 @@ func NewSettingsHandler(
 	keyValueService services.IKeyValueService,
 	mailService services.IMailService,
 	apiKeyService services.IApiKeyService,
+	commitService services.ICommitService,
 ) *SettingsHandler {
 	return &SettingsHandler{
 		config:              conf.Get(),
@@ -85,6 +87,7 @@ func NewSettingsHandler(
 		keyValueSrvc:        keyValueService,
 		mailSrvc:            mailService,
 		apiKeySrvc:          apiKeyService,
+		commitSrvc:          commitService,
 		httpClient:          &http.Client{Timeout: 10 * time.Second},
 		aggregationLocks:    make(map[string]bool),
 	}
@@ -206,6 +209,14 @@ func (h *SettingsHandler) dispatchAction(action string) action {
 		return h.actionAddApiKey
 	case "delete_api_key":
 		return h.actionDeleteApiKey
+	case "link_github_project":
+		return h.actionLinkGithubProject
+	case "update_github_link":
+		return h.actionUpdateGithubLink
+	case "unlink_github_project":
+		return h.actionUnlinkGithubProject
+	case "sync_github_project":
+		return h.actionSyncGithubProject
 	}
 	return nil
 }
@@ -413,6 +424,95 @@ func (h *SettingsHandler) actionUpdateHeartbeatsTimeout(w http.ResponseWriter, r
 	}
 
 	return actionResult{http.StatusOK, "Done. To apply this change to already existing data, please regenerate your summaries.", "", nil}
+}
+
+func (h *SettingsHandler) actionLinkGithubProject(w http.ResponseWriter, r *http.Request) actionResult {
+	if h.config.IsDev() {
+		loadTemplates()
+	}
+
+	user := middlewares.GetPrincipal(r)
+
+	project := strings.TrimSpace(r.PostFormValue("github_project"))
+	repo := strings.TrimSpace(r.PostFormValue("github_repo"))
+	token := strings.TrimSpace(r.PostFormValue("github_token"))
+	branch := strings.TrimSpace(r.PostFormValue("github_branch"))
+
+	if project == "" || repo == "" || token == "" {
+		return actionResult{http.StatusBadRequest, "", "project, repository, and token are required", nil}
+	}
+	if !strings.Contains(repo, "/") {
+		return actionResult{http.StatusBadRequest, "", "repository must be in the form owner/repo", nil}
+	}
+
+	if _, err := h.commitSrvc.LinkProject(user, project, repo, token, branch); err != nil {
+		slog.Warn("failed to link github repo", "user", user.ID, "project", project, "repo", repo, "error", err)
+		return actionResult{http.StatusBadRequest, "", "failed to link repository - check token permissions and repo name", nil}
+	}
+
+	return actionResult{http.StatusOK, "GitHub repository linked. First sync is running.", "", nil}
+}
+
+func (h *SettingsHandler) actionUpdateGithubLink(w http.ResponseWriter, r *http.Request) actionResult {
+	if h.config.IsDev() {
+		loadTemplates()
+	}
+
+	user := middlewares.GetPrincipal(r)
+
+	project := strings.TrimSpace(r.PostFormValue("github_project_update"))
+	branch := strings.TrimSpace(r.PostFormValue("github_branch_update"))
+	token := strings.TrimSpace(r.PostFormValue("github_token_update"))
+
+	if project == "" {
+		return actionResult{http.StatusBadRequest, "", "project is required", nil}
+	}
+
+	if err := h.commitSrvc.UpdateLink(user, project, branch, token); err != nil {
+		slog.Warn("failed to update github link", "user", user.ID, "project", project, "error", err)
+		return actionResult{http.StatusBadRequest, "", "failed to update link - check inputs", nil}
+	}
+
+	return actionResult{http.StatusOK, "GitHub link updated. Sync will refresh shortly.", "", nil}
+}
+
+func (h *SettingsHandler) actionUnlinkGithubProject(w http.ResponseWriter, r *http.Request) actionResult {
+	if h.config.IsDev() {
+		loadTemplates()
+	}
+
+	user := middlewares.GetPrincipal(r)
+	project := strings.TrimSpace(r.PostFormValue("github_project_unlink"))
+	if project == "" {
+		return actionResult{http.StatusBadRequest, "", "project is required", nil}
+	}
+	purge := r.PostFormValue("github_purge") == "true"
+	if err := h.commitSrvc.UnlinkProject(user, project, purge); err != nil {
+		slog.Warn("failed to unlink github project", "user", user.ID, "project", project, "error", err)
+		return actionResult{http.StatusBadRequest, "", "failed to unlink project", nil}
+	}
+	msg := "GitHub link removed."
+	if purge {
+		msg += " Stored commit data was purged."
+	}
+	return actionResult{http.StatusOK, msg, "", nil}
+}
+
+func (h *SettingsHandler) actionSyncGithubProject(w http.ResponseWriter, r *http.Request) actionResult {
+	if h.config.IsDev() {
+		loadTemplates()
+	}
+	user := middlewares.GetPrincipal(r)
+	project := strings.TrimSpace(r.PostFormValue("github_project_sync"))
+	if project == "" {
+		return actionResult{http.StatusBadRequest, "", "project is required", nil}
+	}
+	go func() {
+		if err := h.commitSrvc.SyncNow(user, project); err != nil {
+			slog.Warn("manual sync failed", "user", user.ID, "project", project, "error", err)
+		}
+	}()
+	return actionResult{http.StatusOK, "Sync started.", "", nil}
 }
 
 func (h *SettingsHandler) actionUpdateReadmeStatsBaseUrl(w http.ResponseWriter, r *http.Request) actionResult {
@@ -1043,6 +1143,35 @@ func (h *SettingsHandler) buildViewModel(r *http.Request, w http.ResponseWriter,
 		subscriptionPrice = h.config.Subscriptions.StandardPrice
 	}
 
+	// GitHub links
+	githubLinks := make([]*view.GitHubLink, 0)
+	if h.commitSrvc != nil {
+		if links, err := h.commitSrvc.ListLinks(user); err != nil {
+			conf.Log().Request(r).Warn("failed to load github links", "user", user.ID, "error", err)
+		} else {
+			for _, l := range links {
+				branch := l.Repo.DefaultBranch
+				if l.Link.BranchOverride != "" {
+					branch = l.Link.BranchOverride
+				}
+				var lastSynced *time.Time
+				if l.Link.LastSyncedAt != nil && l.Link.LastSyncedAt.Valid() {
+					t := l.Link.LastSyncedAt.T()
+					lastSynced = &t
+				}
+				githubLinks = append(githubLinks, &view.GitHubLink{
+					Project:       l.Link.Project,
+					Repository:    l.Repo.FullName,
+					RepositoryURL: l.Repo.HTMLURL,
+					Branch:        branch,
+					Status:        l.Link.SyncStatus,
+					Error:         l.Link.SyncError,
+					LastSyncedAt:  lastSynced,
+				})
+			}
+		}
+	}
+
 	// user first data
 	firstData, err := h.heartbeatSrvc.GetFirstByUser(user)
 	if err != nil {
@@ -1101,6 +1230,7 @@ func (h *SettingsHandler) buildViewModel(r *http.Request, w http.ResponseWriter,
 		DataRetentionMonths: h.config.App.DataRetentionMonths,
 		InviteLink:          inviteLink,
 		ApiKeys:             combinedApiKeys,
+		GitHubLinks:         githubLinks,
 	}
 
 	// readme card params

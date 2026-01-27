@@ -36,3 +36,7 @@ func (r *ScmRepositoryRepository) GetByID(id string) (*models.ScmRepository, err
 	}
 	return &repo, nil
 }
+
+func (r *ScmRepositoryRepository) Delete(repo *models.ScmRepository) error {
+	return r.db.Delete(repo).Error
+}

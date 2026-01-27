@@ -19,6 +19,10 @@ func (r *ScmCommitRepository) UpsertMany(commits []*models.ScmCommit) error {
 	return InsertBatchChunked(commits, &models.ScmCommit{}, r.db)
 }
 
+func (r *ScmCommitRepository) DeleteByRepo(repoID string) error {
+	return r.db.Where(&models.ScmCommit{RepositoryID: repoID}).Delete(&models.ScmCommit{}).Error
+}
+
 func (r *ScmCommitRepository) GetLatestByRepoAndBranch(repoID, branch string) (*models.ScmCommit, error) {
 	var commit models.ScmCommit
 	if err := r.db.

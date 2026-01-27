@@ -92,6 +92,7 @@ type appConfig struct {
 	LeaderboardGenerationTime string                       `yaml:"leaderboard_generation_time" default:"0 0 6 * * *,0 0 18 * * *" env:"WAKAPI_LEADERBOARD_GENERATION_TIME"`
 	LeaderboardRequireAuth    bool                         `yaml:"leaderboard_require_auth" default:"false" env:"WAKAPI_LEADERBOARD_REQUIRE_AUTH"`
 	AggregationTime           string                       `yaml:"aggregation_time" default:"0 15 2 * * *" env:"WAKAPI_AGGREGATION_TIME"`
+	CommitSyncCron            string                       `yaml:"commit_sync_cron" default:"0 */10 * * * *" env:"WAKAPI_COMMIT_SYNC_CRON"`
 	ReportTimeWeekly          string                       `yaml:"report_time_weekly" default:"0 0 18 * * 5" env:"WAKAPI_REPORT_TIME_WEEKLY"`
 	DataCleanupTime           string                       `yaml:"data_cleanup_time" default:"0 0 6 * * 0" env:"WAKAPI_DATA_CLEANUP_TIME"`
 	OptimizeDatabaseTime      string                       `yaml:"optimize_database_time" default:"0 0 8 1 * *" env:"WAKAPI_OPTIMIZE_DATABASE_TIME"`

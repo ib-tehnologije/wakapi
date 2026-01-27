@@ -21,6 +21,10 @@ func (r *CommitStatRepository) Upsert(stat *models.CommitStat) error {
 		Create(stat).Error
 }
 
+func (r *CommitStatRepository) DeleteByRepo(repoID string) error {
+	return r.db.Where(&models.CommitStat{RepositoryID: repoID}).Delete(&models.CommitStat{}).Error
+}
+
 func (r *CommitStatRepository) MarkDirtyByUserProjectAfter(userID, project string, after time.Time) error {
 	return r.db.
 		Model(&models.CommitStat{}).

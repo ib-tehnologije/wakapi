@@ -45,6 +45,40 @@ PetiteVue.createApp({
             document.querySelector("#form-delete-user").submit();
         }
     },
+    confirmUnlinkWithPurge(event) {
+        const form = event.target.closest("form");
+        const purgeChecked = form?.querySelector('input[name="github_purge"]')?.checked;
+        if (purgeChecked) {
+            if (!confirm("This will delete stored commits & stats. Continue?")) {
+                event.preventDefault();
+            }
+        }
+    },
+    attachGitHubSyncButtons() {
+        document
+            .querySelectorAll('form input[name="action"][value="sync_github_project"]')
+            .forEach((input) => {
+                const form = input.closest("form");
+                const button = form?.querySelector('button[type="submit"]');
+                if (!button) return;
+                form.addEventListener("submit", () => {
+                    const project = form.querySelector('input[name="github_project_sync"]')?.value;
+                    const row = document.querySelector(`[data-project="${project}"]`);
+                    const cell = row?.querySelector("[data-sync-cell]");
+
+                    button.disabled = true;
+                    const original = button.textContent;
+                    button.textContent = "Syncing...";
+                    if (cell) {
+                        cell.textContent = "syncing…";
+                    }
+                    setTimeout(() => {
+                        button.disabled = false;
+                        button.textContent = original;
+                    }, 8000); // fallback reset if page stays
+                });
+            });
+    },
     onToggleVibrantColors() {
         localStorage.setItem("wakapi_vibrant_colors", this.vibrantColorsEnabled);
     },
@@ -54,5 +88,6 @@ PetiteVue.createApp({
     mounted() {
         this.updateTab();
         window.addEventListener("hashchange", () => this.updateTab());
+        this.attachGitHubSyncButtons();
     },
 }).mount("#settings-page");

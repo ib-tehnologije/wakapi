@@ -750,6 +750,134 @@
             </div>
 
             <div class="w-full lg:w-3/4">
+                <form action="" method="post" class="flex flex-wrap md:flex-nowrap mb-8 gap-x-4">
+                    <input type="hidden" name="action" value="link_github_project">
+                    <div class="w-full md:w-1/2 mb-4 md:mb-0 inline-block">
+                        <label class="font-semibold text-foreground text-lg">GitHub Commits</label>
+                        <span class="block text-sm text-muted">
+                            Link a Wakapi project to a GitHub repository to enable commit syncing and WakaTime-compatible commit APIs. Use a fine-grained PAT with <code class="font-mono">Contents: Read</code> access to the selected repo. We only read commit metadata and do not write anything to GitHub.
+                        </span>
+                    </div>
+                    <div class="w-full md:w-1/2 space-y-3">
+                        <div class="flex flex-col">
+                            <label class="font-semibold text-foreground text-sm" for="github_project">Wakapi project</label>
+                            <select id="github_project" name="github_project" class="select-default">
+                                {{ range .Projects }}
+                                <option value="{{ . }}">{{ . }}</option>
+                                {{ end }}
+                            </select>
+                        </div>
+                        <div class="flex flex-col">
+                            <label class="font-semibold text-foreground text-sm" for="github_repo">GitHub repository</label>
+                            <input id="github_repo" name="github_repo" class="input-default" type="text" placeholder="owner/repo" required>
+                        </div>
+                        <div class="flex flex-col">
+                            <label class="font-semibold text-foreground text-sm" for="github_token">Personal access token (fine-grained)</label>
+                            <input id="github_token" name="github_token" class="input-default" type="password" placeholder="ghp_..." required>
+                        </div>
+                        <div class="flex flex-col">
+                            <label class="font-semibold text-foreground text-sm" for="github_branch">Branch override (optional)</label>
+                            <input id="github_branch" name="github_branch" class="input-default" type="text" placeholder="main">
+                        </div>
+                        <div class="flex justify-end">
+                            <button type="submit" class="btn-primary">Link repository</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <div class="w-full lg:w-3/4">
+                {{ if .GitHubLinks }}
+                <div class="overflow-x-auto rounded border border-focused">
+                    <table class="min-w-full text-sm">
+                        <thead class="bg-card text-muted">
+                        <tr>
+                            <th class="py-2 px-3 text-left">Project</th>
+                            <th class="py-2 px-3 text-left">Repository</th>
+                            <th class="py-2 px-3 text-left">Branch</th>
+                            <th class="py-2 px-3 text-left">Status</th>
+                            <th class="py-2 px-3 text-left">Error</th>
+                            <th class="py-2 px-3 text-left">Last sync</th>
+                            <th class="py-2 px-3 text-left">Actions</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {{ range .GitHubLinks }}
+                        <tr class="border-t border-focused" data-project="{{ .Project }}">
+                            <td class="py-2 px-3 text-foreground">{{ .Project }}</td>
+                            <td class="py-2 px-3"><a class="link" href="{{ .RepositoryURL }}" target="_blank" rel="noreferrer noopener">{{ .Repository }}</a></td>
+                            <td class="py-2 px-3 text-foreground">{{ .Branch }}</td>
+                            <td class="py-2 px-3 text-foreground capitalize">{{ .Status }}</td>
+                            <td class="py-2 px-3 text-foreground">{{ if .Error }}<span title="{{ .Error }}">{{ .Error }}</span>{{ else }}—{{ end }}</td>
+                            <td class="py-2 px-3 text-foreground" data-sync-cell>{{ if .LastSyncedAt }}{{ .LastSyncedAt.Format "2006-01-02 15:04" }}{{ else }}—{{ end }}</td>
+                            <td class="py-2 px-3 text-foreground">
+                                <form action="" method="post" class="inline-block">
+                                    <input type="hidden" name="action" value="sync_github_project">
+                                    <input type="hidden" name="github_project_sync" value="{{ .Project }}">
+                                    <button type="submit" class="btn-primary py-1 px-3 text-xs">Sync now</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {{ end }}
+                        </tbody>
+                    </table>
+                </div>
+                {{ else }}
+                <p class="text-sm text-muted">No GitHub links yet. Link a project to start syncing commits.</p>
+                {{ end }}
+            </div>
+
+            <div class="w-full lg:w-3/4 grid md:grid-cols-2 gap-4 mb-8">
+                <form action="" method="post" class="space-y-3 border border-focused rounded p-4">
+                    <input type="hidden" name="action" value="update_github_link">
+                    <div class="font-semibold text-foreground">Update token / branch</div>
+                    <div class="flex flex-col">
+                        <label class="font-semibold text-foreground text-sm" for="github_project_update">Linked project</label>
+                        <select id="github_project_update" name="github_project_update" class="select-default">
+                            {{ range .GitHubLinks }}
+                            <option value="{{ .Project }}">{{ .Project }}</option>
+                            {{ end }}
+                        </select>
+                    </div>
+                    <div class="flex flex-col">
+                        <label class="font-semibold text-foreground text-sm" for="github_token_update">New token (optional)</label>
+                        <input id="github_token_update" name="github_token_update" class="input-default" type="password" placeholder="ghp_...">
+                    </div>
+                    <div class="flex flex-col">
+                        <label class="font-semibold text-foreground text-sm" for="github_branch_update">Branch override (optional)</label>
+                        <input id="github_branch_update" name="github_branch_update" class="input-default" type="text" placeholder="main">
+                    </div>
+                    <div class="flex justify-end">
+                        <button type="submit" class="btn-primary">Update</button>
+                    </div>
+                </form>
+
+                <form action="" method="post" class="space-y-3 border border-focused rounded p-4" @submit="confirmUnlinkWithPurge">
+                    <input type="hidden" name="action" value="unlink_github_project">
+                    <div class="font-semibold text-foreground">Unlink project</div>
+                    <div class="flex flex-col">
+                        <label class="font-semibold text-foreground text-sm" for="github_project_unlink">Project</label>
+                        <select id="github_project_unlink" name="github_project_unlink" class="select-default">
+                            {{ range .GitHubLinks }}
+                            <option value="{{ .Project }}">{{ .Project }}</option>
+                            {{ end }}
+                        </select>
+                    </div>
+                    <label class="inline-flex items-center text-sm text-foreground">
+                        <input type="checkbox" name="github_purge" value="true" class="mr-2">
+                        Also delete stored commits & stats for this repo
+                    </label>
+                    <div class="flex justify-end">
+                        <button type="submit" class="btn-danger">Unlink</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="w-full lg:w-3/4">
+                <hr class="border-t border-focused mb-4">
+            </div>
+
+            <div class="w-full lg:w-3/4">
                 <div class="flex flex-wrap md:flex-nowrap mb-8 gap-x-4">
                     <div class="w-full md:w-1/2 mb-4 md:mb-0 inline-block">
                         <label class="font-semibold text-foreground text-lg" for="select-timezone">Badges</label>

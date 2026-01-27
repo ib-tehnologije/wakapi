@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gofrs/uuid/v5"
+	"github.com/muety/artifex/v2"
 	"github.com/muety/wakapi/config"
 	"github.com/muety/wakapi/helpers"
 	"github.com/muety/wakapi/models"
@@ -49,6 +50,13 @@ type CommitService struct {
 	userService IUserService
 	heartbeats  IHeartbeatService
 	durations   IDurationService
+	queue       *artifex.Dispatcher
+}
+
+// ProjectLinkInfo bundles a link with its repository metadata for UI consumption.
+type ProjectLinkInfo struct {
+	Link *models.ProjectRepositoryLink
+	Repo *models.ScmRepository
 }
 
 func NewCommitService(
@@ -71,6 +79,7 @@ func NewCommitService(
 		userService: userService,
 		heartbeats:  heartbeatService,
 		durations:   durationService,
+		queue:       config.GetQueue(config.QueueDefault),
 	}
 }
 
@@ -333,11 +342,108 @@ func (s *CommitService) ensureLink(user *models.User, project string) (*models.P
 	return link, repo, account, nil
 }
 
+// ListLinks returns the user's project↔repo links with repository metadata.
+func (s *CommitService) ListLinks(user *models.User) ([]*ProjectLinkInfo, error) {
+	links, err := s.links.ListByUser(user.ID)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]*ProjectLinkInfo, 0, len(links))
+	for _, l := range links {
+		repo, err := s.repos.GetByID(l.RepositoryID)
+		if err != nil {
+			continue
+		}
+		results = append(results, &ProjectLinkInfo{Link: l, Repo: repo})
+	}
+	return results, nil
+}
+
+// UpdateLink updates the branch override and/or token (if provided) for a linked project.
+func (s *CommitService) UpdateLink(user *models.User, project, branchOverride, token string) error {
+	link, err := s.links.GetByUserAndProject(user.ID, project)
+	if err != nil {
+		return err
+	}
+
+	if branchOverride != "" {
+		link.BranchOverride = branchOverride
+	}
+	if token != "" {
+		if err := s.UpdateToken(user, token); err != nil {
+			return err
+		}
+	}
+
+	// mark for resync
+	link.LastSyncedAt = nil
+	link.SyncStatus = "pending"
+	link.SyncError = ""
+	return s.links.Upsert(link)
+}
+
+// UpdateToken rotates the stored PAT for the user.
+func (s *CommitService) UpdateToken(user *models.User, token string) error {
+	if token == "" {
+		return errors.New("token required")
+	}
+	account, err := s.accounts.GetByUserAndProvider(user.ID, models.ScmProviderGithub)
+	if err != nil {
+		account = &models.ScmAccount{
+			ID:       uuid.Must(uuid.NewV4()).String(),
+			UserID:   user.ID,
+			Provider: models.ScmProviderGithub,
+			AuthType: models.ScmAuthTypePat,
+		}
+	}
+	enc, err := newTokenCipher().Encrypt(token)
+	if err != nil {
+		return err
+	}
+	account.AccessTokenEnc = enc
+	return s.accounts.Upsert(account)
+}
+
+// UnlinkProject removes the link between a project and repository.
+func (s *CommitService) UnlinkProject(user *models.User, project string, purge bool) error {
+	link, err := s.links.GetByUserAndProject(user.ID, project)
+	if err != nil {
+		return err
+	}
+	repo, err := s.repos.GetByID(link.RepositoryID)
+	if err != nil {
+		return err
+	}
+
+	if purge {
+		if err := s.stats.DeleteByRepo(repo.ID); err != nil {
+			return err
+		}
+		if err := s.commits.DeleteByRepo(repo.ID); err != nil {
+			return err
+		}
+		if err := s.repos.Delete(repo); err != nil {
+			return err
+		}
+	}
+
+	return s.links.DeleteByUserAndProject(user.ID, project)
+}
+
 func (s *CommitService) effectiveBranch(link *models.ProjectRepositoryLink, repo *models.ScmRepository) string {
 	if link.BranchOverride != "" {
 		return link.BranchOverride
 	}
 	return repo.DefaultBranch
+}
+
+// SyncNow triggers an immediate sync for a given project link.
+func (s *CommitService) SyncNow(user *models.User, project string) error {
+	link, repo, account, err := s.ensureLink(user, project)
+	if err != nil {
+		return err
+	}
+	return s.Sync(link, account, repo)
 }
 
 func (s *CommitService) computeStats(userID, project string, repo *models.ScmRepository, branch string) error {
@@ -452,4 +558,53 @@ func truncateHash(hash string) string {
 		return hash
 	}
 	return hash[:7]
+}
+
+// Schedule periodic sync for stale project↔repo links.
+func (s *CommitService) Schedule() {
+	cronExpr := s.config.App.CommitSyncCron
+	if cronExpr == "" {
+		cronExpr = "0 */10 * * * *"
+	}
+	slog.Info("scheduling commit sync", "cron", cronExpr)
+
+	if _, err := s.queue.DispatchCron(func() {
+		s.syncStaleLinks()
+	}, cronExpr); err != nil {
+		config.Log().Error("failed to schedule commit sync", "error", err)
+	}
+}
+
+func (s *CommitService) syncStaleLinks() {
+	staleBefore := time.Now().Add(-linkSyncStaleAfter)
+
+	links, err := s.links.ListStale(staleBefore, 50)
+	if err != nil {
+		slog.Warn("failed to list stale commit links", "error", err)
+		return
+	}
+
+	for _, link := range links {
+		account, err := s.accounts.GetByUserAndProvider(link.UserID, models.ScmProviderGithub)
+		if err != nil {
+			slog.Warn("no scm account for link", "link", link.ID, "error", err)
+			continue
+		}
+		repo, err := s.repos.GetByID(link.RepositoryID)
+		if err != nil {
+			slog.Warn("missing repo for link", "link", link.ID, "error", err)
+			continue
+		}
+
+		link.SyncStatus = "syncing"
+		link.SyncError = ""
+		_ = s.links.Upsert(link)
+
+		if err := s.Sync(link, account, repo); err != nil {
+			link.SyncStatus = "error"
+			link.SyncError = err.Error()
+			_ = s.links.Upsert(link)
+			slog.Warn("sync stale link failed", "link", link.ID, "error", err)
+		}
+	}
 }

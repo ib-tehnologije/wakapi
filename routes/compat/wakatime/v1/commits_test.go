@@ -14,22 +14,32 @@ import (
 	"github.com/muety/wakapi/models"
 	wv1 "github.com/muety/wakapi/models/compat/wakatime/v1"
 	"github.com/muety/wakapi/services"
+	"gorm.io/gorm"
 )
 
 type stubCommitService struct {
 	list *services.CommitsResult
 	one  *services.CommitResult
+	err  error
 }
 
 func (s *stubCommitService) LinkProject(*models.User, string, string, string, string) (*models.ProjectRepositoryLink, error) {
 	return nil, nil
 }
 func (s *stubCommitService) GetCommits(*models.User, string, string, string, int, int) (*services.CommitsResult, error) {
-	return s.list, nil
+	return s.list, s.err
 }
 func (s *stubCommitService) GetCommit(*models.User, string, string, string, string) (*services.CommitResult, error) {
-	return s.one, nil
+	return s.one, s.err
 }
+func (s *stubCommitService) ListLinks(*models.User) ([]*services.ProjectLinkInfo, error) {
+	return nil, nil
+}
+func (s *stubCommitService) Schedule()                                             {}
+func (s *stubCommitService) UpdateLink(*models.User, string, string, string) error { return nil }
+func (s *stubCommitService) UnlinkProject(*models.User, string, bool) error        { return nil }
+func (s *stubCommitService) UpdateToken(*models.User, string) error                { return nil }
+func (s *stubCommitService) SyncNow(*models.User, string) error                    { return nil }
 
 func TestCommitsHandler_GetMany(t *testing.T) {
 	config.Set(config.Empty())
@@ -107,6 +117,33 @@ func TestCommitsHandler_GetMany(t *testing.T) {
 	}
 	if resp.Total != 1 || resp.TotalPages != 1 {
 		t.Fatalf("unexpected totals %d pages %d", resp.Total, resp.TotalPages)
+	}
+}
+
+func TestCommitsHandler_GetMany_NotLinked(t *testing.T) {
+	config.Set(config.Empty())
+
+	user := &models.User{ID: "user", ApiKey: "apikey"}
+
+	handler := NewCommitsHandler(
+		&mockUserService{user: user},
+		&stubCommitService{err: gorm.ErrRecordNotFound},
+	)
+
+	router := chi.NewRouter()
+	apiRouter := chi.NewRouter()
+	apiRouter.Use(middlewares.NewSharedDataMiddleware())
+	handler.RegisterRoutes(apiRouter)
+	router.Mount("/api", apiRouter)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/compat/wakatime/v1/users/current/projects/unknown/commits", nil)
+	req.Header.Set("Authorization", "Bearer "+base64.StdEncoding.EncodeToString([]byte(user.ApiKey)))
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }
 
