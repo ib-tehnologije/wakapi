@@ -3,6 +3,7 @@ package v1
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/duke-git/lancet/v2/datetime"
 	"github.com/go-chi/chi/v5"
 	conf "github.com/muety/wakapi/config"
 	"github.com/muety/wakapi/helpers"
@@ -52,8 +54,19 @@ func (h *CommitsHandler) GetMany(w http.ResponseWriter, r *http.Request) {
 	branch := q.Get("branch")
 	author := q.Get("author")
 	page, _ := strconv.Atoi(q.Get("page"))
+	perPage, _ := strconv.Atoi(q.Get("per_page"))
 
-	res, err := h.commitSrvc.GetCommits(user, project, branch, author, page, 0)
+	dateFromParam := q.Get("date_from")
+	dateToParam := q.Get("date_to")
+
+	dateFrom, dateTo, parseErr := parseDateRange(dateFromParam, dateToParam, user.TZ())
+	if parseErr != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(parseErr.Error()))
+		return
+	}
+
+	res, err := h.commitSrvc.GetCommits(user, project, branch, author, page, perPage, dateFrom, dateTo)
 	if err != nil {
 		status := http.StatusInternalServerError
 		body := conf.ErrInternalServerError
@@ -102,6 +115,9 @@ func (h *CommitsHandler) GetOne(w http.ResponseWriter, r *http.Request) {
 
 func toCommitsResponse(r *http.Request, res *services.CommitsResult, author string) *wv1.CommitsResponse {
 	perPage := defaultCommitPageSize
+	if res.PerPage > 0 {
+		perPage = res.PerPage
+	}
 	totalPages := int(math.Ceil(float64(res.Total) / float64(perPage)))
 	if totalPages == 0 {
 		totalPages = 1
@@ -275,6 +291,49 @@ func toProjectVM(repo *models.ScmRepository, link *models.ProjectRepositoryLink)
 			WatchCount:    repo.WatchCount,
 		},
 	}
+}
+
+func parseDateRange(dateFromRaw, dateToRaw string, tz *time.Location) (*time.Time, *time.Time, error) {
+	normalize := func(v string) string {
+		// restore '+' that may have been decoded to space
+		return strings.Replace(v, " ", "+", 1)
+	}
+
+	var dateFrom, dateTo *time.Time
+
+	if dateFromRaw != "" {
+		parsed, err := helpers.ParseDateTimeTZ(normalize(dateFromRaw), tz)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid date_from")
+		}
+		dateFrom = &parsed
+	}
+
+	if dateToRaw != "" {
+		parsed, err := helpers.ParseDateTimeTZ(normalize(dateToRaw), tz)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid date_to")
+		}
+		if isDateOnly(dateToRaw) {
+			parsed = datetime.EndOfDay(parsed)
+		}
+		dateTo = &parsed
+	}
+
+	if dateFrom != nil && dateTo != nil && dateFrom.After(*dateTo) {
+		return nil, nil, fmt.Errorf("date_from must be before or equal to date_to")
+	}
+
+	return dateFrom, dateTo, nil
+}
+
+func isDateOnly(v string) bool {
+	v = strings.TrimSpace(v)
+	if len(v) != len(conf.SimpleDateFormat) {
+		return false
+	}
+	_, err := time.Parse(conf.SimpleDateFormat, v)
+	return err == nil
 }
 
 func optionalPage(p, totalPages int) *int {

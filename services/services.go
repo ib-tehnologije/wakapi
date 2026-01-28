@@ -185,7 +185,7 @@ type IApiKeyService interface {
 type ICommitService interface {
 	LinkProject(*models.User, string, string, string, string) (*models.ProjectRepositoryLink, error)
 	LinkProjectWithRepo(*models.User, string, string, string) (*models.ProjectRepositoryLink, error)
-	GetCommits(*models.User, string, string, string, int, int) (*CommitsResult, error)
+	GetCommits(*models.User, string, string, string, int, int, *time.Time, *time.Time) (*CommitsResult, error)
 	GetCommit(*models.User, string, string, string, string) (*CommitResult, error)
 	ListLinks(*models.User) ([]*ProjectLinkInfo, error)
 	ListRepos(*models.User, string, int, int) ([]*models.ScmRepository, error)

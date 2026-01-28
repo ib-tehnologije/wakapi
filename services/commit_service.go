@@ -21,6 +21,7 @@ import (
 
 const (
 	defaultCommitPageSize = 50
+	maxCommitPageSize     = 200
 	linkSyncStaleAfter    = 15 * time.Minute
 	lookbackWindow        = 30 * 24 * time.Hour
 )
@@ -38,6 +39,7 @@ type CommitsResult struct {
 	Branch  string
 	Total   int64
 	Page    int
+	PerPage int
 }
 
 type CommitResult struct {
@@ -261,7 +263,7 @@ STORE:
 	return s.links.Upsert(link)
 }
 
-func (s *CommitService) GetCommits(user *models.User, project, branch, author string, page, perPage int) (*CommitsResult, error) {
+func (s *CommitService) GetCommits(user *models.User, project, branch, author string, page, perPage int, dateFrom, dateTo *time.Time) (*CommitsResult, error) {
 	link, repo, account, err := s.ensureLink(user, project)
 	if err != nil {
 		return nil, err
@@ -285,23 +287,44 @@ func (s *CommitService) GetCommits(user *models.User, project, branch, author st
 		return nil, err
 	}
 
-	filtered := make([]*models.CommitStat, 0, len(stats))
+	type commitWithStat struct {
+		stat   *models.CommitStat
+		commit *models.ScmCommit
+	}
+
+	filtered := make([]*commitWithStat, 0, len(stats))
 	for _, st := range stats {
 		cmt, err := s.commits.GetByRepoAndHash(repo.ID, st.CommitHash)
 		if err != nil {
 			continue
 		}
+
 		if author != "" {
 			if cmt.AuthorName != author && cmt.CommitterName != author && cmt.AuthorUsername != author && cmt.CommitterUsername != author {
 				continue
 			}
 		}
-		filtered = append(filtered, st)
+
+		commitTime := cmt.CommitterDate.T()
+		if commitTime.IsZero() {
+			commitTime = cmt.AuthorDate.T()
+		}
+		if dateFrom != nil && commitTime.Before(*dateFrom) {
+			continue
+		}
+		if dateTo != nil && commitTime.After(*dateTo) {
+			continue
+		}
+
+		filtered = append(filtered, &commitWithStat{stat: st, commit: cmt})
 	}
 
 	total := int64(len(filtered))
 	if perPage <= 0 {
 		perPage = defaultCommitPageSize
+	}
+	if perPage > maxCommitPageSize {
+		perPage = maxCommitPageSize
 	}
 	if page <= 0 {
 		page = 1
@@ -316,21 +339,22 @@ func (s *CommitService) GetCommits(user *models.User, project, branch, author st
 	}
 	paged := filtered[start:end]
 
+	statsPaged := make([]*models.CommitStat, len(paged))
 	commitMap := make(map[string]*models.ScmCommit, len(paged))
-	for _, st := range paged {
-		if c, err := s.commits.GetByRepoAndHash(repo.ID, st.CommitHash); err == nil {
-			commitMap[st.CommitHash] = c
-		}
+	for i, item := range paged {
+		statsPaged[i] = item.stat
+		commitMap[item.stat.CommitHash] = item.commit
 	}
 
 	return &CommitsResult{
 		Link:    link,
 		Repo:    repo,
-		Stats:   paged,
+		Stats:   statsPaged,
 		Commits: commitMap,
 		Branch:  branch,
 		Total:   total,
 		Page:    page,
+		PerPage: perPage,
 	}, nil
 }
 

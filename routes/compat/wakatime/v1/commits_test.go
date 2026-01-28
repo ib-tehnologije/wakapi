@@ -29,7 +29,7 @@ func (s *stubCommitService) LinkProject(*models.User, string, string, string, st
 func (s *stubCommitService) LinkProjectWithRepo(*models.User, string, string, string) (*models.ProjectRepositoryLink, error) {
 	return nil, nil
 }
-func (s *stubCommitService) GetCommits(*models.User, string, string, string, int, int) (*services.CommitsResult, error) {
+func (s *stubCommitService) GetCommits(*models.User, string, string, string, int, int, *time.Time, *time.Time) (*services.CommitsResult, error) {
 	return s.list, s.err
 }
 func (s *stubCommitService) GetCommit(*models.User, string, string, string, string) (*services.CommitResult, error) {
@@ -53,6 +53,18 @@ func (s *stubCommitService) DeleteToken(*models.User) error                 { re
 func (s *stubCommitService) HasToken(*models.User) (bool, error)            { return true, nil }
 func (s *stubCommitService) SyncNow(*models.User, string) error             { return nil }
 func (s *stubCommitService) SyncByID(*models.User, string) error            { return nil }
+
+type capturingCommitService struct {
+	*stubCommitService
+	lastDateFrom *time.Time
+	lastDateTo   *time.Time
+}
+
+func (s *capturingCommitService) GetCommits(user *models.User, project, branch, author string, page, perPage int, dateFrom, dateTo *time.Time) (*services.CommitsResult, error) {
+	s.lastDateFrom = dateFrom
+	s.lastDateTo = dateTo
+	return s.stubCommitService.GetCommits(user, project, branch, author, page, perPage, dateFrom, dateTo)
+}
 
 func TestCommitsHandler_GetMany(t *testing.T) {
 	config.Set(config.Empty())
@@ -98,6 +110,7 @@ func TestCommitsHandler_GetMany(t *testing.T) {
 				Branch:  "main",
 				Total:   1,
 				Page:    1,
+				PerPage: 50,
 			},
 		},
 	)
@@ -157,6 +170,95 @@ func TestCommitsHandler_GetMany_NotLinked(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestCommitsHandler_GetMany_InvalidDateRange(t *testing.T) {
+	config.Set(config.Empty())
+
+	user := &models.User{ID: "user", ApiKey: "apikey"}
+
+	handler := NewCommitsHandler(
+		&mockUserService{user: user},
+		&stubCommitService{},
+	)
+
+	router := chi.NewRouter()
+	apiRouter := chi.NewRouter()
+	apiRouter.Use(middlewares.NewSharedDataMiddleware())
+	handler.RegisterRoutes(apiRouter)
+	router.Mount("/api", apiRouter)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/compat/wakatime/v1/users/current/projects/proj/commits?date_from=2024-01-02&date_to=2024-01-01", nil)
+	req.Header.Set("Authorization", "Bearer "+base64.StdEncoding.EncodeToString([]byte(user.ApiKey)))
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestCommitsHandler_GetMany_DateParsing(t *testing.T) {
+	config.Set(config.Empty())
+
+	repo := &models.ScmRepository{ID: "repo1", Name: "repo1", FullName: "alice/repo1", Owner: "alice", HTMLURL: "http://example.com/r", APIURL: "http://api.example.com/r", DefaultBranch: "main"}
+	link := &models.ProjectRepositoryLink{Project: "proj", RepositoryID: "repo1", SyncStatus: "ok"}
+
+	capturingService := &capturingCommitService{
+		stubCommitService: &stubCommitService{
+			list: &services.CommitsResult{
+				Link:    link,
+				Repo:    repo,
+				Stats:   []*models.CommitStat{},
+				Commits: map[string]*models.ScmCommit{},
+				Branch:  "main",
+				Total:   0,
+				Page:    1,
+				PerPage: 50,
+			},
+		},
+	}
+
+	user := &models.User{ID: "user", ApiKey: "apikey"}
+
+	handler := NewCommitsHandler(
+		&mockUserService{user: user},
+		capturingService,
+	)
+
+	router := chi.NewRouter()
+	apiRouter := chi.NewRouter()
+	apiRouter.Use(middlewares.NewSharedDataMiddleware())
+	handler.RegisterRoutes(apiRouter)
+	router.Mount("/api", apiRouter)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/compat/wakatime/v1/users/current/projects/proj/commits?date_from=2024-01-01&date_to=2024-01-01", nil)
+	req.Header.Set("Authorization", "Bearer "+base64.StdEncoding.EncodeToString([]byte(user.ApiKey)))
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if capturingService.lastDateFrom == nil || capturingService.lastDateTo == nil {
+		t.Fatalf("expected parsed dates to be passed to service")
+	}
+
+	if capturingService.lastDateFrom.UTC().Day() != 1 || capturingService.lastDateFrom.UTC().Month() != time.January {
+		t.Fatalf("unexpected date_from %v", capturingService.lastDateFrom)
+	}
+
+	if capturingService.lastDateTo.Hour() != 23 || capturingService.lastDateTo.Minute() != 59 {
+		t.Fatalf("expected date_to end of day, got %v", capturingService.lastDateTo)
+	}
+
+	// ensure timestamps still represent same calendar day
+	if capturingService.lastDateTo.Day() != capturingService.lastDateFrom.Day() {
+		t.Fatalf("date_to day mismatch")
 	}
 }
 
