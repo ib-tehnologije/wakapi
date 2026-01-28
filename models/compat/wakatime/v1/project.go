@@ -17,4 +17,5 @@ type Project struct {
 	HumanReadableLastHeartbeatAt string    `json:"human_readable_last_heartbeat_at"`
 	UrlencodedName               string    `json:"urlencoded_name"`
 	CreatedAt                    time.Time `json:"created_at"`
+	HasRepo                      bool      `json:"has_repo"`
 }

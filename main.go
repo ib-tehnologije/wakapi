@@ -247,7 +247,7 @@ func main() {
 	wakatimeV1SummariesHandler := wtV1Routes.NewSummariesHandler(userService, summaryService)
 	wakatimeV1StatsHandler := wtV1Routes.NewStatsHandler(userService, summaryService)
 	wakatimeV1UsersHandler := wtV1Routes.NewUsersHandler(userService, heartbeatService)
-	wakatimeV1ProjectsHandler := wtV1Routes.NewProjectsHandler(userService, heartbeatService)
+	wakatimeV1ProjectsHandler := wtV1Routes.NewProjectsHandler(userService, heartbeatService, commitService)
 	wakatimeV1HeartbeatsHandler := wtV1Routes.NewHeartbeatHandler(userService, heartbeatService)
 	wakatimeV1LeadersHandler := wtV1Routes.NewLeadersHandler(userService, leaderboardService)
 	wakatimeV1UserAgentsHandler := wtV1Routes.NewUserAgentsHandler(userService, heartbeatService)

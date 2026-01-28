@@ -22,12 +22,14 @@ type ProjectsHandler struct {
 	config        *conf.Config
 	userSrvc      services.IUserService
 	heartbeatSrvc services.IHeartbeatService
+	commitSrvc    services.ICommitService
 }
 
-func NewProjectsHandler(userService services.IUserService, heartbeatsService services.IHeartbeatService) *ProjectsHandler {
+func NewProjectsHandler(userService services.IUserService, heartbeatsService services.IHeartbeatService, commitService services.ICommitService) *ProjectsHandler {
 	return &ProjectsHandler{
 		userSrvc:      userService,
 		heartbeatSrvc: heartbeatsService,
+		commitSrvc:    commitService,
 		config:        conf.Get(),
 	}
 }
@@ -108,6 +110,15 @@ func (h *ProjectsHandler) loadProjects(user *models.User, q string, exact bool) 
 		return nil, err
 	}
 
+	linked := map[string]bool{}
+	if h.commitSrvc != nil {
+		if links, err := h.commitSrvc.ListLinks(user); err == nil {
+			for _, l := range links {
+				linked[l.Link.Project] = true
+			}
+		}
+	}
+
 	projects := make([]*v1.Project, 0, len(results))
 	for _, p := range results {
 		if (exact && p.Project == q) || (!exact && strings.HasPrefix(p.Project, q)) {
@@ -118,6 +129,7 @@ func (h *ProjectsHandler) loadProjects(user *models.User, q string, exact bool) 
 				HumanReadableLastHeartbeatAt: helpers.FormatDateTimeHuman(p.Last.T()),
 				UrlencodedName:               url.QueryEscape(p.Project),
 				CreatedAt:                    p.First.T(),
+				HasRepo:                      linked[p.Project],
 			})
 		}
 	}

@@ -248,11 +248,12 @@ func TestCommitsHandler_GetMany_DateParsing(t *testing.T) {
 		t.Fatalf("expected parsed dates to be passed to service")
 	}
 
-	if capturingService.lastDateFrom.UTC().Day() != 1 || capturingService.lastDateFrom.UTC().Month() != time.January {
+	tz := user.TZ()
+	if capturingService.lastDateFrom.In(tz).Day() != 1 || capturingService.lastDateFrom.In(tz).Month() != time.January {
 		t.Fatalf("unexpected date_from %v", capturingService.lastDateFrom)
 	}
 
-	if capturingService.lastDateTo.Hour() != 23 || capturingService.lastDateTo.Minute() != 59 {
+	if capturingService.lastDateTo.In(tz).Hour() != 23 || capturingService.lastDateTo.In(tz).Minute() != 59 {
 		t.Fatalf("expected date_to end of day, got %v", capturingService.lastDateTo)
 	}
 
