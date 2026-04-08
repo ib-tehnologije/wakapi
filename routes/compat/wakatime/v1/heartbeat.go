@@ -67,16 +67,31 @@ func (h *HeartbeatHandler) Get(w http.ResponseWriter, r *http.Request) {
 	timezone := user.TZ()
 	rangeFrom, rangeTo := datetime.BeginOfDay(date.In(timezone)), datetime.EndOfDay(date.In(timezone))
 
-	heartbeats, err := h.heartbeatSrvc.GetAllWithin(rangeFrom, rangeTo, user)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(conf.ErrInternalServerError))
-		conf.Log().Request(r).Error("failed to retrieve heartbeats", "error", err)
-		return
+	filters := helpers.ParseSummaryFilters(r)
+
+	var heartbeats []*wakatime.HeartbeatEntry
+	if filters.IsEmpty() {
+		results, getErr := h.heartbeatSrvc.GetAllWithin(rangeFrom, rangeTo, user)
+		if getErr != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(conf.ErrInternalServerError))
+			conf.Log().Request(r).Error("failed to retrieve heartbeats", "error", getErr)
+			return
+		}
+		heartbeats = wakatime.HeartbeatsToCompat(results)
+	} else {
+		results, getErr := h.heartbeatSrvc.GetAllWithinByFilters(rangeFrom, rangeTo, user, filters)
+		if getErr != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(conf.ErrInternalServerError))
+			conf.Log().Request(r).Error("failed to retrieve filtered heartbeats", "error", getErr)
+			return
+		}
+		heartbeats = wakatime.HeartbeatsToCompat(results)
 	}
 
 	res := HeartbeatsResult{
-		Data:     wakatime.HeartbeatsToCompat(heartbeats),
+		Data:     heartbeats,
 		Start:    rangeFrom.UTC().Format(time.RFC3339),
 		End:      rangeTo.UTC().Format(time.RFC3339),
 		Timezone: timezone.String(),

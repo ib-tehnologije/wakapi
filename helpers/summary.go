@@ -69,7 +69,7 @@ func ParseSummaryFilters(r *http.Request) *models.Filters {
 		filters.With(models.SummaryBranch, q)
 	}
 	if q := r.URL.Query().Get("entity"); q != "" {
-		filters.With(models.SummaryBranch, q)
+		filters.With(models.SummaryEntity, q)
 	}
 	if q := r.URL.Query().Get("category"); q != "" {
 		filters.With(models.SummaryCategory, q)
