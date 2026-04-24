@@ -192,7 +192,9 @@ func (f *Filters) MatchHeartbeat(h *Heartbeat) bool {
 		(f.Language == nil || f.Language.MatchAny(h.Language)) &&
 		(f.Editor == nil || f.Editor.MatchAny(h.Editor)) &&
 		(f.Machine == nil || f.Machine.MatchAny(h.Machine)) &&
-		(f.Category == nil || f.Machine.MatchAny(h.Category))
+		(f.Branch == nil || f.Branch.MatchAny(h.Branch)) &&
+		(f.Entity == nil || f.Entity.MatchAny(h.Entity)) &&
+		(f.Category == nil || f.Category.MatchAny(h.Category))
 }
 
 func (f *Filters) MatchDuration(d *Duration) bool {
@@ -201,6 +203,8 @@ func (f *Filters) MatchDuration(d *Duration) bool {
 		(f.Language == nil || f.Language.MatchAny(d.Language)) &&
 		(f.Editor == nil || f.Editor.MatchAny(d.Editor)) &&
 		(f.Machine == nil || f.Machine.MatchAny(d.Machine)) &&
+		(f.Branch == nil || f.Branch.MatchAny(d.Branch)) &&
+		(f.Entity == nil || f.Entity.MatchAny(d.Entity)) &&
 		(f.Category == nil || f.Category.MatchAny(d.Category))
 }
 

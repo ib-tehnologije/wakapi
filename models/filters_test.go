@@ -84,8 +84,8 @@ func (suite *FiltersTestSuite) TestFilters_IsEmpty() {
 
 func (suite *FiltersTestSuite) TestFilters_Match() {
 	heartbeats := []*Heartbeat{
-		{Project: "wakapi", Language: "Go"},
-		{Project: "anchr", Language: "Javascript"},
+		{Project: "wakapi", Language: "Go", Branch: "main", Entity: "services/heartbeat.go", Category: "coding"},
+		{Project: "anchr", Language: "Javascript", Branch: "feature", Entity: "app.ts", Category: "debugging"},
 	}
 
 	sut1 := NewFiltersWith(SummaryProject, "wakapi")
@@ -103,6 +103,34 @@ func (suite *FiltersTestSuite) TestFilters_Match() {
 	sut4 := &Filters{}
 	assert.True(suite.T(), sut4.MatchHeartbeat(heartbeats[0]))
 	assert.True(suite.T(), sut4.MatchHeartbeat(heartbeats[1]))
+
+	sut5 := NewFiltersWith(SummaryProject, "wakapi").With(SummaryBranch, "main")
+	assert.True(suite.T(), sut5.MatchHeartbeat(heartbeats[0]))
+	assert.False(suite.T(), sut5.MatchHeartbeat(heartbeats[1]))
+
+	sut6 := NewFiltersWith(SummaryProject, "wakapi").With(SummaryBranch, "feature")
+	assert.False(suite.T(), sut6.MatchHeartbeat(heartbeats[0]))
+
+	sut7 := NewFiltersWith(SummaryEntity, "services/heartbeat.go").With(SummaryCategory, "coding")
+	assert.True(suite.T(), sut7.MatchHeartbeat(heartbeats[0]))
+	assert.False(suite.T(), sut7.MatchHeartbeat(heartbeats[1]))
+}
+
+func (suite *FiltersTestSuite) TestFilters_MatchDuration_HonorsBranchEntityAndCategory() {
+	duration := &Duration{
+		Project:  "wakapi",
+		Language: "Go",
+		Branch:   "main",
+		Entity:   "services/commit_service.go",
+		Category: "coding",
+	}
+
+	assert.True(suite.T(), NewFiltersWith(SummaryProject, "wakapi").With(SummaryBranch, "main").MatchDuration(duration))
+	assert.False(suite.T(), NewFiltersWith(SummaryProject, "wakapi").With(SummaryBranch, "feature").MatchDuration(duration))
+	assert.True(suite.T(), NewFiltersWith(SummaryEntity, "services/commit_service.go").MatchDuration(duration))
+	assert.False(suite.T(), NewFiltersWith(SummaryEntity, "services/heartbeat.go").MatchDuration(duration))
+	assert.True(suite.T(), NewFiltersWith(SummaryCategory, "coding").MatchDuration(duration))
+	assert.False(suite.T(), NewFiltersWith(SummaryCategory, "debugging").MatchDuration(duration))
 }
 
 func (suite *FiltersTestSuite) TestFilters_One() {

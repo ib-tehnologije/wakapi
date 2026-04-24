@@ -282,6 +282,10 @@ func (s *CommitService) GetCommits(user *models.User, project, branch, author st
 		}
 	}
 
+	if err := s.ensureStatsCurrent(user.ID, project, repo, branch); err != nil {
+		return nil, err
+	}
+
 	stats, _, err := s.stats.GetByUserProjectBranch(user.ID, project, branch, 0, 0)
 	if err != nil {
 		return nil, err
@@ -369,6 +373,10 @@ func (s *CommitService) GetCommit(user *models.User, project, branch, hash, auth
 
 	if link.LastSyncedAt == nil || time.Since(link.LastSyncedAt.T()) > linkSyncStaleAfter {
 		_ = s.Sync(link, account, repo)
+	}
+
+	if err := s.ensureStatsCurrent(user.ID, project, repo, branch); err != nil {
+		return nil, err
 	}
 
 	stat, err := s.stats.GetByUserProjectBranchAndHash(user.ID, project, branch, hash)
@@ -709,6 +717,21 @@ func (s *CommitService) computeStats(userID, project string, repo *models.ScmRep
 		}
 		prev = end
 	}
+	return nil
+}
+
+func (s *CommitService) ensureStatsCurrent(userID, project string, repo *models.ScmRepository, branch string) error {
+	stats, _, err := s.stats.GetByUserProjectBranch(userID, project, branch, 0, 0)
+	if err != nil {
+		return err
+	}
+
+	if len(stats) == 0 || slices.ContainsFunc(stats, func(stat *models.CommitStat) bool {
+		return stat.Dirty || stat.AlgoVersion != models.CommitAlgoVersion
+	}) {
+		return s.computeStats(userID, project, repo, branch)
+	}
+
 	return nil
 }
 
