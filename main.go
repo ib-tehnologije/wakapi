@@ -74,6 +74,7 @@ var (
 	projectRepoLinkRepository repositories.IProjectRepositoryLinkRepository
 	scmCommitRepository       repositories.IScmCommitRepository
 	commitStatRepository      repositories.ICommitStatRepository
+	codexTaskRepository       *repositories.CodexTaskSessionRepository
 )
 
 var (
@@ -95,6 +96,7 @@ var (
 	miscService            services.IMiscService
 	apiKeyService          services.IApiKeyService
 	commitService          services.ICommitService
+	codexTaskService       services.ICodexTaskService
 )
 
 // TODO: Refactor entire project to be structured after business domains
@@ -190,6 +192,7 @@ func main() {
 	projectRepoLinkRepository = repositories.NewProjectRepositoryLinkRepository(db)
 	scmCommitRepository = repositories.NewScmCommitRepository(db)
 	commitStatRepository = repositories.NewCommitStatRepository(db)
+	codexTaskRepository = repositories.NewCodexTaskSessionRepository(db)
 
 	// Services
 	mailService = mail.NewMailService()
@@ -209,6 +212,7 @@ func main() {
 	housekeepingService = services.NewHousekeepingService(userService, heartbeatService, summaryService, aliasRepository) // can pass any repo here
 	miscService = services.NewMiscService(userService, heartbeatService, summaryService, keyValueService, mailService)
 	commitService = services.NewCommitService(scmAccountRepository, scmRepositoryRepository, projectRepoLinkRepository, scmCommitRepository, commitStatRepository, userService, heartbeatService, durationService)
+	codexTaskService = services.NewCodexTaskService(codexTaskRepository)
 
 	if config.App.LeaderboardEnabled {
 		leaderboardService = services.NewLeaderboardService(leaderboardRepository, summaryService, userService)
@@ -239,6 +243,7 @@ func main() {
 	activityHandler := api.NewActivityApiHandler(userService, activityService)
 	badgeHandler := api.NewBadgeHandler(userService, summaryService)
 	githubIntegrationHandler := api.NewGitHubIntegrationHandler(userService, commitService)
+	codexTaskHandler := api.NewCodexTaskApiHandler(userService, codexTaskService)
 	captchaHandler := api.NewCaptchaHandler()
 
 	// Compat Handlers
@@ -323,6 +328,7 @@ func main() {
 	activityHandler.RegisterRoutes(apiRouter)
 	badgeHandler.RegisterRoutes(apiRouter)
 	githubIntegrationHandler.RegisterRoutes(apiRouter)
+	codexTaskHandler.RegisterRoutes(apiRouter)
 	wakatimeV1StatusBarHandler.RegisterRoutes(apiRouter)
 	wakatimeV1AllHandler.RegisterRoutes(apiRouter)
 	wakatimeV1SummariesHandler.RegisterRoutes(apiRouter)
