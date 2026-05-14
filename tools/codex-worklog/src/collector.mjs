@@ -16,7 +16,7 @@ export async function handleHook(payload, env = process.env, deps = {}) {
   const eventName = payload.hook_event_name;
 
   if (eventName === "SessionStart") {
-    await flushQueue(dirs, env, deps);
+    await sweep(env, deps);
     return {action: "session_seen"};
   }
 
@@ -67,7 +67,10 @@ export async function sweep(env = process.env, deps = {}) {
     if (!file.endsWith(".json")) {
       continue;
     }
-    const task = JSON.parse(await readFile(path.join(dirs.tasks, file), "utf8"));
+    const task = await readJsonOrQuarantine(dirs, path.join(dirs.tasks, file));
+    if (!task) {
+      continue;
+    }
     const updatedAt = Date.parse(task.updated_at || task.started_at);
     if (!Number.isFinite(updatedAt) || updatedAt >= staleBefore) {
       continue;
@@ -95,7 +98,10 @@ export async function flushQueue(dirs, env = process.env, deps = {}) {
     }
 
     const filePath = path.join(dirs.queue, file);
-    const payload = JSON.parse(await readFile(filePath, "utf8"));
+    const payload = await readJsonOrQuarantine(dirs, filePath);
+    if (!payload) {
+      continue;
+    }
     if (await submitPayload(payload, env, deps)) {
       await rm(filePath, {force: true});
       submitted += 1;
@@ -283,10 +289,27 @@ async function ensureDirs(root) {
     root,
     tasks: path.join(root, "tasks"),
     queue: path.join(root, "queue"),
+    bad: path.join(root, "bad"),
   };
   await mkdir(dirs.tasks, {recursive: true});
   await mkdir(dirs.queue, {recursive: true});
+  await mkdir(dirs.bad, {recursive: true});
   return dirs;
+}
+
+async function readJsonOrQuarantine(dirs, filePath) {
+  try {
+    return JSON.parse(await readFile(filePath, "utf8"));
+  } catch {
+    await quarantineBadFile(dirs, filePath);
+    return null;
+  }
+}
+
+async function quarantineBadFile(dirs, filePath) {
+  const digest = createHash("sha256").update(`${filePath}:${Date.now()}`).digest("hex").slice(0, 12);
+  const targetPath = path.join(dirs.bad, `${path.basename(filePath)}.${digest}.bad`);
+  await rename(filePath, targetPath);
 }
 
 async function saveTask(dirs, task) {

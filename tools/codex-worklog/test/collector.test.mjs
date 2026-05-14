@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import {mkdtemp, readFile, readdir, rm} from "node:fs/promises";
+import {mkdtemp, readFile, readdir, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import {handleHook} from "../src/collector.mjs";
+import {handleHook, sweep} from "../src/collector.mjs";
 
 const now = new Date("2026-05-14T09:00:00.000Z");
 
@@ -122,5 +122,100 @@ test("Stop closes and queues a session when Wakapi credentials are missing", asy
     assert.equal(payload.sessions[0].external_key, "codex:local:thread-1:turn-1");
     assert.equal(payload.sessions[0].duration_seconds, 1200);
     assert.equal(payload.sessions[0].last_assistant_message, "Implemented Codex task worklogs.");
+  });
+});
+
+test("SessionStart closes stale open tasks at their last activity time", async () => {
+  await withWorklogHome(async (home) => {
+    const env = {CODEX_WORKLOG_HOME: home, CODEX_WORKLOG_INSTALLATION_ID: "local"};
+    let current = new Date("2026-05-14T09:00:00.000Z");
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/OnixServer",
+        prompt: "work on stale sweeper",
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:15:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "PostToolUse",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/OnixServer",
+        tool_name: "Bash",
+        tool_input: {command: "npm test"},
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T14:00:00.000Z");
+    const result = await handleHook(
+      {
+        hook_event_name: "SessionStart",
+        session_id: "thread-2",
+        cwd: "/Users/igbenic/Projects/OnixServer",
+      },
+      env,
+      deps,
+    );
+
+    assert.equal(result.action, "session_seen");
+    assert.deepEqual(await readdir(path.join(home, "tasks")), []);
+
+    const queued = await readdir(path.join(home, "queue"));
+    assert.equal(queued.length, 1);
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].external_key, "codex:local:thread-1:turn-1");
+    assert.equal(payload.sessions[0].status, "stale");
+    assert.equal(payload.sessions[0].ended_at, "2026-05-14T09:15:00.000Z");
+    assert.equal(payload.sessions[0].duration_seconds, 900);
+  });
+});
+
+test("sweep quarantines malformed task files and continues closing valid stale tasks", async () => {
+  await withWorklogHome(async (home) => {
+    const env = {CODEX_WORKLOG_HOME: home, CODEX_WORKLOG_INSTALLATION_ID: "local"};
+    let current = new Date("2026-05-14T09:00:00.000Z");
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/OnixServer",
+        prompt: "valid stale task",
+      },
+      env,
+      deps,
+    );
+
+    await writeFile(path.join(home, "tasks", "broken.json"), "{\"id\":\"broken\"} trailing text");
+
+    current = new Date("2026-05-14T14:00:00.000Z");
+    const result = await sweep(env, deps);
+
+    assert.equal(result.closed, 1);
+    assert.deepEqual(await readdir(path.join(home, "tasks")), []);
+    assert.equal((await readdir(path.join(home, "queue"))).length, 1);
+
+    const badFiles = await readdir(path.join(home, "bad"));
+    assert.equal(badFiles.length, 1);
+    assert.match(badFiles[0], /^broken\.json\./);
   });
 });

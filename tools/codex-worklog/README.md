@@ -22,3 +22,12 @@ write the same values to `~/.codex/worklog/config.json`:
 
 One visible worklog is created for each Codex `UserPromptSubmit` -> `Stop` turn.
 If the Wakapi URL or API key is missing, the closed turn is queued and retried by later hooks.
+
+`SessionStart` also runs the stale-task sweeper. The same sweeper can be run from launchd:
+
+```sh
+/Users/igbenic/.nvm/versions/node/v22.18.0/bin/node /Users/igbenic/Projects/wakapi/tools/codex-worklog/bin/codex-worklog-hook.mjs sweep
+```
+
+By default, tasks with no activity for 240 minutes are closed at their last recorded activity
+time and submitted or queued for retry.
