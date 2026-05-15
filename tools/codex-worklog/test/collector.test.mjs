@@ -17,6 +17,14 @@ async function withWorklogHome(fn) {
   }
 }
 
+function testEnv(home) {
+  return {
+    CODEX_WORKLOG_HOME: home,
+    CODEX_WORKLOG_INSTALLATION_ID: "local",
+    CODEX_WORKLOG_CONFIG: path.join(home, "missing-config.json"),
+  };
+}
+
 test("UserPromptSubmit starts a task keyed by session and turn", async () => {
   await withWorklogHome(async (home) => {
     const result = await handleHook(
@@ -27,7 +35,7 @@ test("UserPromptSubmit starts a task keyed by session and turn", async () => {
         cwd: "/Users/igbenic/Projects/OnixServer",
         prompt: "implement codex task worklogs",
       },
-      {CODEX_WORKLOG_HOME: home, CODEX_WORKLOG_INSTALLATION_ID: "local"},
+      testEnv(home),
       {now: () => now, resolveWorkspace: async (cwd) => cwd},
     );
 
@@ -44,7 +52,7 @@ test("UserPromptSubmit starts a task keyed by session and turn", async () => {
 
 test("PostToolUse records file evidence from apply_patch", async () => {
   await withWorklogHome(async (home) => {
-    const env = {CODEX_WORKLOG_HOME: home, CODEX_WORKLOG_INSTALLATION_ID: "local"};
+    const env = testEnv(home);
     const deps = {now: () => now, resolveWorkspace: async (cwd) => cwd};
 
     await handleHook(
@@ -82,7 +90,7 @@ test("PostToolUse records file evidence from apply_patch", async () => {
 
 test("Stop closes and queues a session when Wakapi credentials are missing", async () => {
   await withWorklogHome(async (home) => {
-    const env = {CODEX_WORKLOG_HOME: home, CODEX_WORKLOG_INSTALLATION_ID: "local"};
+    const env = testEnv(home);
     let current = now;
     const deps = {
       now: () => current,
@@ -127,7 +135,7 @@ test("Stop closes and queues a session when Wakapi credentials are missing", asy
 
 test("SessionStart closes stale open tasks at their last activity time", async () => {
   await withWorklogHome(async (home) => {
-    const env = {CODEX_WORKLOG_HOME: home, CODEX_WORKLOG_INSTALLATION_ID: "local"};
+    const env = testEnv(home);
     let current = new Date("2026-05-14T09:00:00.000Z");
     const deps = {
       now: () => current,
@@ -186,7 +194,7 @@ test("SessionStart closes stale open tasks at their last activity time", async (
 
 test("sweep quarantines malformed task files and continues closing valid stale tasks", async () => {
   await withWorklogHome(async (home) => {
-    const env = {CODEX_WORKLOG_HOME: home, CODEX_WORKLOG_INSTALLATION_ID: "local"};
+    const env = testEnv(home);
     let current = new Date("2026-05-14T09:00:00.000Z");
     const deps = {
       now: () => current,
@@ -217,5 +225,43 @@ test("sweep quarantines malformed task files and continues closing valid stale t
     const badFiles = await readdir(path.join(home, "bad"));
     assert.equal(badFiles.length, 1);
     assert.match(badFiles[0], /^broken\.json\./);
+  });
+});
+
+test("parallel tool hooks do not corrupt the task file", async () => {
+  await withWorklogHome(async (home) => {
+    const env = testEnv(home);
+    const deps = {now: () => now, resolveWorkspace: async (cwd) => cwd};
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        prompt: "record parallel tool hooks",
+      },
+      env,
+      deps,
+    );
+
+    const hooks = Array.from({length: 40}, (_, index) => handleHook(
+      {
+        hook_event_name: "PostToolUse",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        tool_name: "Bash",
+        tool_input: {command: `printf '${"x".repeat(2000)}' # ${index}`},
+      },
+      env,
+      deps,
+    ));
+
+    const results = await Promise.allSettled(hooks);
+    assert.deepEqual(results.map((result) => result.status), Array(40).fill("fulfilled"));
+
+    const task = JSON.parse(await readFile(path.join(home, "tasks", "thread-1__turn-1.json"), "utf8"));
+    assert.ok(task.events.length > 0);
   });
 });

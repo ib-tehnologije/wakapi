@@ -1,5 +1,5 @@
 import {execFile} from "node:child_process";
-import {createHash} from "node:crypto";
+import {createHash, randomUUID} from "node:crypto";
 import {existsSync} from "node:fs";
 import {mkdir, readFile, readdir, rename, rm, writeFile} from "node:fs/promises";
 import {homedir} from "node:os";
@@ -201,7 +201,7 @@ async function submitOrQueue(dirs, payload, env, deps) {
   }
 
   const key = createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 24);
-  const tmpPath = path.join(dirs.queue, `${key}.tmp`);
+  const tmpPath = path.join(dirs.queue, `${key}.${process.pid}.${randomUUID()}.tmp`);
   const finalPath = path.join(dirs.queue, `${key}.json`);
   await writeFile(tmpPath, JSON.stringify(payload, null, 2));
   await rename(tmpPath, finalPath);
@@ -313,7 +313,7 @@ async function quarantineBadFile(dirs, filePath) {
 }
 
 async function saveTask(dirs, task) {
-  const tmpPath = path.join(dirs.tasks, `${safeFileName(task.id)}.tmp`);
+  const tmpPath = path.join(dirs.tasks, `${safeFileName(task.id)}.${process.pid}.${randomUUID()}.tmp`);
   const finalPath = path.join(dirs.tasks, `${safeFileName(task.id)}.json`);
   await writeFile(tmpPath, JSON.stringify(task, null, 2));
   await rename(tmpPath, finalPath);
