@@ -15,6 +15,10 @@ export async function handleHook(payload, env = process.env, deps = {}) {
   const dirs = await ensureDirs(worklogHome);
   const eventName = payload.hook_event_name;
 
+  if (env.CODEX_WORKLOG_SUMMARY_RUNNING === "1") {
+    return {action: "ignored"};
+  }
+
   if (eventName === "SessionStart") {
     await sweep(env, deps);
     return {action: "session_seen"};
@@ -37,6 +41,7 @@ export async function handleHook(payload, env = process.env, deps = {}) {
   if (eventName === "Stop") {
     const task = await loadOrCreateTask(dirs, payload, env, now(), resolveWorkspace);
     closeTask(task, payload, now());
+    await addHumanSummary(task, env, deps);
     await saveTask(dirs, task);
 
     const payloadBody = {sessions: [taskToSessionPayload(task)]};
@@ -184,6 +189,7 @@ function taskToSessionPayload(task) {
     ended_at: task.ended_at,
     duration_seconds: task.duration_seconds || 0,
     status: task.status,
+    summary_hr: task.summary_hr || "",
     prompt: task.prompt,
     last_assistant_message: task.last_assistant_message,
     evidence: task.evidence || [],
@@ -193,6 +199,105 @@ function taskToSessionPayload(task) {
       turn_id: task.turn_id,
     },
   };
+}
+
+async function addHumanSummary(task, env, deps = {}) {
+  if (task.summary_hr || env.CODEX_WORKLOG_SUMMARY_ENABLED === "0" || env.CODEX_WORKLOG_SUMMARY_RUNNING === "1") {
+    return;
+  }
+
+  const summarizeTask = deps.summarizeTask ?? generateCodexSummary;
+  try {
+    const summary = await summarizeTask(task, env, deps);
+    const normalized = normalizeSummary(summary, summaryMaxChars(env));
+    if (normalized) {
+      task.summary_hr = normalized;
+    }
+  } catch {
+    // Summary generation is best-effort. Submission/queueing must still work.
+  }
+}
+
+function summaryMaxChars(env) {
+  const maxChars = Number(env.CODEX_WORKLOG_SUMMARY_MAX_CHARS || 220);
+  return Number.isFinite(maxChars) && maxChars > 0 ? maxChars : 220;
+}
+
+async function generateCodexSummary(task, env, deps = {}) {
+  const codexBin = env.CODEX_WORKLOG_CODEX_BIN || "codex";
+  const model = env.CODEX_WORKLOG_SUMMARY_MODEL || "gpt-5.4-mini";
+  const timeout = Number(env.CODEX_WORKLOG_SUMMARY_TIMEOUT_MS || 12000);
+  const outputPath = path.join(env.CODEX_WORKLOG_HOME || path.join(homedir(), ".codex", "worklog"), "summary", `${safeFileName(task.id)}.${process.pid}.${randomUUID()}.txt`);
+  await mkdir(path.dirname(outputPath), {recursive: true});
+
+  const prompt = summaryPrompt(task);
+  const execImpl = deps.execFile ?? execFileAsync;
+  const childEnv = {
+    ...process.env,
+    ...env,
+    CODEX_WORKLOG_SUMMARY_RUNNING: "1",
+  };
+
+  const args = [
+    "exec",
+    "--ephemeral",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--skip-git-repo-check",
+    "--model",
+    model,
+    "--sandbox",
+    "read-only",
+    "--output-last-message",
+    outputPath,
+    prompt,
+  ];
+
+  await execImpl(codexBin, args, {
+    cwd: task.workspace_root || process.cwd(),
+    env: childEnv,
+    timeout,
+    maxBuffer: 128 * 1024,
+  });
+
+  return readFile(outputPath, "utf8").finally(() => rm(outputPath, {force: true}));
+}
+
+function summaryPrompt(task) {
+  const events = (task.events || [])
+    .slice(-12)
+    .map((event) => {
+      const command = event.command ? ` ${event.command}` : "";
+      return `- ${event.hook_event_name || "tool"} ${event.tool_name || ""}${command}`.trim().slice(0, 360);
+    })
+    .join("\n");
+
+  const evidence = (task.evidence || []).slice(0, 12).map((item) => `- ${item}`).join("\n");
+  return [
+    "Write one concise human worklog summary for Wakapi in Croatian or English, matching the user's language when obvious.",
+    "Return only the summary text. No markdown, no bullets, no quotes.",
+    "Keep it under 180 characters. Mention concrete work, not internal tool mechanics.",
+    "",
+    `Project: ${task.project || "unknown"}`,
+    `Prompt: ${task.prompt || ""}`.slice(0, 1200),
+    `Assistant result: ${task.last_assistant_message || ""}`.slice(0, 1200),
+    "Evidence:",
+    evidence || "- none",
+    "Recent tool events:",
+    events || "- none",
+  ].join("\n");
+}
+
+function normalizeSummary(value, maxChars) {
+  const summary = String(value || "")
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!summary) {
+    return "";
+  }
+  return summary.length > maxChars ? `${summary.slice(0, Math.max(0, maxChars - 3)).trim()}...` : summary;
 }
 
 async function submitOrQueue(dirs, payload, env, deps) {

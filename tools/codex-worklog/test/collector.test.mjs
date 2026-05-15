@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {mkdtemp, readFile, readdir, rm, writeFile} from "node:fs/promises";
+import {mkdtemp, mkdir, readFile, readdir, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -22,6 +22,7 @@ function testEnv(home) {
     CODEX_WORKLOG_HOME: home,
     CODEX_WORKLOG_INSTALLATION_ID: "local",
     CODEX_WORKLOG_CONFIG: path.join(home, "missing-config.json"),
+    CODEX_WORKLOG_SUMMARY_ENABLED: "0",
   };
 }
 
@@ -47,6 +48,28 @@ test("UserPromptSubmit starts a task keyed by session and turn", async () => {
     assert.equal(task.project, "OnixServer");
     assert.equal(task.prompt, "implement codex task worklogs");
     assert.equal(task.started_at, "2026-05-14T09:00:00.000Z");
+  });
+});
+
+test("hook ignores events from the summary subprocess", async () => {
+  await withWorklogHome(async (home) => {
+    const result = await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "summary-session",
+        turn_id: "summary-turn",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        prompt: "summarize another task",
+      },
+      {
+        ...testEnv(home),
+        CODEX_WORKLOG_SUMMARY_RUNNING: "1",
+      },
+      {now: () => now, resolveWorkspace: async (cwd) => cwd},
+    );
+
+    assert.equal(result.action, "ignored");
+    assert.deepEqual(await readdir(path.join(home, "tasks")), []);
   });
 });
 
@@ -130,6 +153,125 @@ test("Stop closes and queues a session when Wakapi credentials are missing", asy
     assert.equal(payload.sessions[0].external_key, "codex:local:thread-1:turn-1");
     assert.equal(payload.sessions[0].duration_seconds, 1200);
     assert.equal(payload.sessions[0].last_assistant_message, "Implemented Codex task worklogs.");
+  });
+});
+
+test("Stop includes a generated human summary in the queued session", async () => {
+  await withWorklogHome(async (home) => {
+    const env = {
+      ...testEnv(home),
+      CODEX_WORKLOG_SUMMARY_ENABLED: "1",
+    };
+    let current = now;
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+      summarizeTask: async (task) => {
+        assert.equal(task.project, "wakapi");
+        assert.equal(task.prompt, "add LLM summaries to Codex worklogs");
+        return "Added Codex worklog LLM summaries.";
+      },
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        prompt: "add LLM summaries to Codex worklogs",
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:03:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "Stop",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        last_assistant_message: "Implemented summary generation.",
+      },
+      env,
+      deps,
+    );
+
+    const queued = await readdir(path.join(home, "queue"));
+    assert.equal(queued.length, 1);
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].summary_hr, "Added Codex worklog LLM summaries.");
+  });
+});
+
+test("Stop invokes Codex summary generation with the low model and recursion guard", async () => {
+  await withWorklogHome(async (home) => {
+    const env = {
+      ...testEnv(home),
+      CODEX_WORKLOG_CODEX_BIN: "/bin/codex",
+      CODEX_WORKLOG_SUMMARY_ENABLED: "1",
+      CODEX_WORKLOG_SUMMARY_MODEL: "tiny-codex",
+      CODEX_WORKLOG_SUMMARY_TIMEOUT_MS: "3456",
+    };
+    let current = now;
+    let execCall;
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+      execFile: async (command, args, options) => {
+        execCall = {command, args, options};
+        const outputIndex = args.indexOf("--output-last-message");
+        await mkdir(path.dirname(args[outputIndex + 1]), {recursive: true});
+        await writeFile(args[outputIndex + 1], "Generated via Codex summary.");
+        return {stdout: "", stderr: ""};
+      },
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        prompt: "summarize Codex worklogs",
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:04:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "Stop",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        last_assistant_message: "Added local summary generation.",
+      },
+      env,
+      deps,
+    );
+
+    assert.equal(execCall.command, "/bin/codex");
+    assert.equal(execCall.options.cwd, "/Users/igbenic/Projects/wakapi");
+    assert.equal(execCall.options.timeout, 3456);
+    assert.equal(execCall.options.env.CODEX_WORKLOG_SUMMARY_RUNNING, "1");
+    assert.deepEqual(execCall.args.slice(0, 7), [
+      "exec",
+      "--ephemeral",
+      "--ignore-user-config",
+      "--ignore-rules",
+      "--skip-git-repo-check",
+      "--model",
+      "tiny-codex",
+    ]);
+    assert.ok(execCall.args.includes("--sandbox"));
+    assert.ok(execCall.args.includes("read-only"));
+
+    const queued = await readdir(path.join(home, "queue"));
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].summary_hr, "Generated via Codex summary.");
   });
 });
 
