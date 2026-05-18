@@ -152,9 +152,51 @@ test("Stop closes and queues a session when Wakapi credentials are missing", asy
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
     assert.equal(payload.sessions[0].external_key, "codex:local:thread-1:turn-1");
     assert.equal(payload.sessions[0].duration_seconds, 1200);
-    assert.equal(payload.sessions[0].summary_hr, "Rad s Codexom na projektu OnixServer.");
+    assert.equal(payload.sessions[0].summary_hr, "Implemented Codex task worklogs.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /sync codex worklogs/i);
     assert.equal(payload.sessions[0].last_assistant_message, "Implemented Codex task worklogs.");
+  });
+});
+
+test("Stop falls back to a clean title from assistant JSON", async () => {
+  await withWorklogHome(async (home) => {
+    const env = testEnv(home);
+    let current = now;
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/URA",
+        prompt: "raw user message should never become the visible summary",
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:20:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "Stop",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/URA",
+        last_assistant_message: "{\"title\":\"Review URA migration flow\"}",
+      },
+      env,
+      deps,
+    );
+
+    const queued = await readdir(path.join(home, "queue"));
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].summary_hr, "Review URA migration flow.");
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /title/i);
   });
 });
 

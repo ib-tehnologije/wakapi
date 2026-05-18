@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -57,6 +58,15 @@ type CodexTaskWorklog struct {
 type CodexTaskService struct {
 	repository codexTaskSessionRepository
 }
+
+var (
+	codexFencedCodePattern   = regexp.MustCompile("(?s)```.*?```")
+	codexInlineCodePattern   = regexp.MustCompile("`([^`]+)`")
+	codexMarkdownLinkPattern = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
+	codexHeadingPattern      = regexp.MustCompile(`^#{1,6}\s+`)
+	codexListPattern         = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+`)
+	codexWhitespacePattern   = regexp.MustCompile(`\s+`)
+)
 
 func NewCodexTaskService(repository codexTaskSessionRepository) *CodexTaskService {
 	return &CodexTaskService{repository: repository}
@@ -184,12 +194,116 @@ func (s *CodexTaskService) buildSession(user *models.User, input *CodexTaskSessi
 }
 
 func buildCodexSummary(input *CodexTaskSessionInput) string {
+	if summary := assistantFallbackSummary(input.LastAssistantMessage, 180); summary != "" {
+		return summary
+	}
+
 	project := strings.TrimSpace(input.Project)
 	if project == "" {
 		project = "nepoznatom projektu"
 	}
 
 	return fmt.Sprintf("Rad s Codexom na projektu %s.", project)
+}
+
+func assistantFallbackSummary(value string, max int) string {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return ""
+	}
+
+	if title := titleFromJSON(raw); title != "" {
+		return normalizeCodexSummary(ensureCodexSentence(title), max)
+	}
+
+	withoutCode := codexFencedCodePattern.ReplaceAllString(raw, " ")
+	withoutCode = strings.ReplaceAll(withoutCode, "\r\n", "\n")
+	for _, paragraph := range strings.Split(withoutCode, "\n\n") {
+		candidate := cleanCodexSummaryText(paragraph)
+		if candidate != "" {
+			return normalizeCodexSummary(firstCodexSentence(candidate), max)
+		}
+	}
+
+	candidate := cleanCodexSummaryText(withoutCode)
+	if candidate == "" {
+		return ""
+	}
+	return normalizeCodexSummary(firstCodexSentence(candidate), max)
+}
+
+func titleFromJSON(value string) string {
+	if !strings.HasPrefix(value, "{") || !strings.HasSuffix(value, "}") {
+		return ""
+	}
+
+	var payload struct {
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(value), &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Title)
+}
+
+func cleanCodexSummaryText(value string) string {
+	value = codexMarkdownLinkPattern.ReplaceAllString(value, "$1")
+	value = codexInlineCodePattern.ReplaceAllString(value, "$1")
+
+	lines := []string{}
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		line = codexHeadingPattern.ReplaceAllString(line, "")
+		line = codexListPattern.ReplaceAllString(line, "")
+		line = strings.Trim(line, "*_~ ")
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+
+	return strings.TrimSpace(codexWhitespacePattern.ReplaceAllString(strings.Join(lines, " "), " "))
+}
+
+func firstCodexSentence(value string) string {
+	for index, r := range value {
+		if r == '.' || r == '?' || r == '!' {
+			return strings.TrimSpace(value[:index+len(string(r))])
+		}
+	}
+	return strings.TrimSpace(value)
+}
+
+func ensureCodexSentence(value string) string {
+	text := normalizeCodexSummary(value, 0)
+	if text == "" {
+		return ""
+	}
+
+	runes := []rune(text)
+	if strings.ContainsRune(".?!", runes[len(runes)-1]) {
+		return text
+	}
+	return text + "."
+}
+
+func normalizeCodexSummary(value string, max int) string {
+	summary := strings.Trim(strings.TrimSpace(value), "\"'`")
+	summary = strings.TrimSpace(codexWhitespacePattern.ReplaceAllString(summary, " "))
+	if summary == "" {
+		return ""
+	}
+	if max <= 0 {
+		return summary
+	}
+
+	runes := []rune(summary)
+	if len(runes) <= max {
+		return summary
+	}
+	if max <= 3 {
+		return string(runes[:max])
+	}
+	return strings.TrimSpace(string(runes[:max-3])) + "..."
 }
 
 func buildCodexTechnicalNote(input *CodexTaskSessionInput) string {

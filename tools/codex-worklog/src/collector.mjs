@@ -7,6 +7,7 @@ import path from "node:path";
 import {promisify} from "node:util";
 
 const execFileAsync = promisify(execFile);
+const fallbackSummaryMaxChars = 180;
 
 export async function handleHook(payload, env = process.env, deps = {}) {
   const now = deps.now ?? (() => new Date());
@@ -202,8 +203,75 @@ function taskToSessionPayload(task) {
 }
 
 function fallbackSummary(task) {
+  const assistantSummary = assistantFallbackSummary(task.last_assistant_message);
+  if (assistantSummary) {
+    return assistantSummary;
+  }
+
   const project = String(task.project || "").trim() || "nepoznatom projektu";
   return `Rad s Codexom na projektu ${project}.`;
+}
+
+function assistantFallbackSummary(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const title = titleFromJson(raw);
+  if (title) {
+    return normalizeSummary(ensureSentence(title), fallbackSummaryMaxChars);
+  }
+
+  const withoutCode = raw.replace(/```[\s\S]*?```/g, " ");
+  const paragraphs = withoutCode
+    .split(/\n\s*\n/)
+    .map(cleanSummaryText)
+    .filter(Boolean);
+  const candidate = paragraphs[0] || cleanSummaryText(withoutCode);
+  if (!candidate) {
+    return "";
+  }
+  return normalizeSummary(firstSentence(candidate), fallbackSummaryMaxChars);
+}
+
+function titleFromJson(value) {
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed.title === "string") {
+      return parsed.title.trim();
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+function cleanSummaryText(value) {
+  return String(value || "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .split("\n")
+    .map((line) => line
+      .replace(/^#{1,6}\s+/, "")
+      .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "")
+      .trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/[*_~]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function firstSentence(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(.{1,180}?[.!?])(?:\s|$)/);
+  return match ? match[1].trim() : text;
+}
+
+function ensureSentence(value) {
+  const text = String(value || "").trim();
+  return text && !/[.!?]$/.test(text) ? `${text}.` : text;
 }
 
 async function addHumanSummary(task, env, deps = {}) {
