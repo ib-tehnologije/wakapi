@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -67,6 +68,10 @@ var (
 	codexHeadingPattern      = regexp.MustCompile(`^#{1,6}\s+`)
 	codexListPattern         = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+`)
 	codexWhitespacePattern   = regexp.MustCompile(`\s+`)
+	codexEvidenceFilePattern = regexp.MustCompile(`(?:^|[\s"'=:(])((?:\.{1,2}/)?[A-Za-z0-9._@~+-][A-Za-z0-9._@~+/-]*\.(?:cs|go|mjs|cjs|js|jsx|ts|tsx|json|ya?ml|toml|sql|pas|dfm|dart|md|sh|bash|zsh|ps1|csproj|sln|props|targets|graphql|proto|rs|py|rb|php|java|kt|swift|css|scss|html|xml|txt|ini|conf|env|service))(?:[:#]\d+)?`)
+	codexPatchFilePattern    = regexp.MustCompile(`(?m)^\*\*\* (?:Add|Update|Delete) File: (.+)$`)
+	codexReplyPrefixPattern  = regexp.MustCompile(`^(?:you|you're|you are|your|i|i'm|i am|i've|i have|we|we're|we are)\b`)
+	codexVagueSummaryPattern = regexp.MustCompile(`^(?:checked|patched|fixed|updated|changed|reviewed|worked on|handled|investigated|debugged|cleaned)(?:\s+(?:it|this|that))?[.!?]?$|^(?:checked and patched|checked and fixed|patched and checked|fixed and checked)\s+(?:it|this|that)[.!?]?$`)
 	codexFillerSummaries     = map[string]bool{"yes": true, "yep": true, "ok": true, "okay": true, "done": true, "sure": true, "youreright": true, "youareright": true}
 )
 
@@ -161,7 +166,7 @@ func (s *CodexTaskService) buildSession(user *models.User, input *CodexTaskSessi
 		}
 	}
 
-	summary := strings.TrimSpace(input.SummaryHR)
+	summary := usefulCodexSummary(input.SummaryHR, 220)
 	if summary == "" {
 		summary = buildCodexSummary(input)
 	}
@@ -196,6 +201,10 @@ func (s *CodexTaskService) buildSession(user *models.User, input *CodexTaskSessi
 }
 
 func buildCodexSummary(input *CodexTaskSessionInput) string {
+	if summary := codexEvidenceSummary(input); summary != "" {
+		return summary
+	}
+
 	if summary := assistantFallbackSummary(input.LastAssistantMessage, 180); summary != "" {
 		return summary
 	}
@@ -218,20 +227,139 @@ func assistantFallbackSummary(value string, max int) string {
 		return usefulCodexSummary(ensureCodexSentence(jsonSummary), max)
 	}
 
-	withoutCode := codexFencedCodePattern.ReplaceAllString(raw, " ")
-	withoutCode = strings.ReplaceAll(withoutCode, "\r\n", "\n")
-	for _, paragraph := range strings.Split(withoutCode, "\n\n") {
-		candidate := cleanCodexSummaryText(paragraph)
-		if candidate != "" {
-			return usefulCodexSummary(firstCodexSentence(candidate), max)
+	return ""
+}
+
+func codexEvidenceSummary(input *CodexTaskSessionInput) string {
+	changedFiles := []string{}
+	inspectedFiles := []string{}
+
+	for _, item := range input.Evidence {
+		evidence := strings.TrimSpace(item)
+		if evidence == "" {
+			continue
 		}
+		if strings.HasPrefix(evidence, "command:") {
+			addCodexEvidenceFiles(&inspectedFiles, extractCodexCommandFiles(strings.TrimSpace(strings.TrimPrefix(evidence, "command:"))))
+			continue
+		}
+		addCodexEvidenceFiles(&changedFiles, []string{evidence})
 	}
 
-	candidate := cleanCodexSummaryText(withoutCode)
-	if candidate == "" {
+	for _, event := range codexTechnicalEvidenceEvents(input.TechnicalEvidenceJSON) {
+		command := strings.TrimSpace(event.Command)
+		if command == "" {
+			continue
+		}
+		patchFiles := extractCodexPatchFiles(command)
+		if len(patchFiles) > 0 || event.ToolName == "apply_patch" {
+			addCodexEvidenceFiles(&changedFiles, patchFiles)
+			continue
+		}
+		addCodexEvidenceFiles(&inspectedFiles, extractCodexCommandFiles(command))
+	}
+
+	if len(changedFiles) > 0 {
+		return codexFileSummary("Updated", changedFiles, 1, 180)
+	}
+	if len(inspectedFiles) > 0 {
+		return codexFileSummary("Inspected", inspectedFiles, 2, 180)
+	}
+	return ""
+}
+
+type codexEvidenceEvent struct {
+	ToolName string `json:"tool_name"`
+	Command  string `json:"command"`
+	Cmd      string `json:"cmd"`
+}
+
+func codexTechnicalEvidenceEvents(value string) []codexEvidenceEvent {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+
+	var payload struct {
+		Events []codexEvidenceEvent `json:"events"`
+	}
+	if err := json.Unmarshal([]byte(value), &payload); err != nil {
+		return nil
+	}
+	for i := range payload.Events {
+		if payload.Events[i].Command == "" {
+			payload.Events[i].Command = payload.Events[i].Cmd
+		}
+	}
+	return payload.Events
+}
+
+func extractCodexPatchFiles(command string) []string {
+	files := []string{}
+	for _, match := range codexPatchFilePattern.FindAllStringSubmatch(command, -1) {
+		if len(match) > 1 {
+			addCodexEvidenceFiles(&files, []string{match[1]})
+		}
+	}
+	return files
+}
+
+func extractCodexCommandFiles(command string) []string {
+	files := []string{}
+	for _, match := range codexEvidenceFilePattern.FindAllStringSubmatch(command, -1) {
+		if len(match) > 1 {
+			addCodexEvidenceFiles(&files, []string{match[1]})
+		}
+	}
+	return files
+}
+
+func addCodexEvidenceFiles(target *[]string, values []string) {
+	for _, value := range values {
+		file := cleanCodexEvidenceFile(value)
+		if file == "" {
+			continue
+		}
+		exists := false
+		for _, existing := range *target {
+			if existing == file {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			*target = append(*target, file)
+		}
+	}
+}
+
+func cleanCodexEvidenceFile(value string) string {
+	file := strings.Trim(strings.TrimSpace(value), "\"'`,.;)")
+	file = strings.TrimPrefix(file, "./")
+	if file == "" || strings.Contains(file, "://") || strings.Contains(file, "node_modules/") || strings.Contains(file, "/.git/") {
 		return ""
 	}
-	return usefulCodexSummary(firstCodexSentence(candidate), max)
+	return file
+}
+
+func codexFileSummary(verb string, files []string, maxFiles int, maxChars int) string {
+	cleanFiles := []string{}
+	addCodexEvidenceFiles(&cleanFiles, files)
+	if len(cleanFiles) == 0 {
+		return ""
+	}
+	if maxFiles <= 0 || maxFiles > len(cleanFiles) {
+		maxFiles = len(cleanFiles)
+	}
+
+	label := cleanFiles[0]
+	if maxFiles > 1 {
+		label = cleanFiles[0] + " and " + cleanFiles[1]
+	}
+	summary := fmt.Sprintf("%s %s.", verb, label)
+	if len([]rune(summary)) <= maxChars {
+		return summary
+	}
+	return fmt.Sprintf("%s %s.", verb, filepath.Base(cleanFiles[0]))
 }
 
 func summaryFromJSON(value string) string {
@@ -324,10 +452,36 @@ func usefulCodexSummary(value string, max int) string {
 		}
 	}
 	key := plain.String()
-	if key == "" || codexFillerSummaries[key] {
+	if key == "" || codexFillerSummaries[key] || !isUsefulCodexWorkSummary(summary) {
 		return ""
 	}
 	return summary
+}
+
+func isUsefulCodexWorkSummary(value string) bool {
+	summary := strings.TrimSpace(value)
+	if summary == "" {
+		return false
+	}
+
+	lower := strings.ToLower(summary)
+	if lower == "..." || strings.HasPrefix(lower, "rad s codexom na projektu ") {
+		return false
+	}
+	if codexReplyPrefixPattern.MatchString(lower) {
+		return false
+	}
+	if strings.HasPrefix(lower, "yes ") || strings.HasPrefix(lower, "yep ") ||
+		strings.HasPrefix(lower, "no ") || strings.HasPrefix(lower, "ok ") ||
+		strings.HasPrefix(lower, "okay ") || strings.HasPrefix(lower, "sure ") ||
+		strings.HasPrefix(lower, "done ") || strings.HasPrefix(lower, "right ") ||
+		strings.HasPrefix(lower, "exactly ") || strings.HasPrefix(lower, "correct ") {
+		return false
+	}
+	if codexVagueSummaryPattern.MatchString(lower) {
+		return false
+	}
+	return true
 }
 
 func buildCodexTechnicalNote(input *CodexTaskSessionInput) string {

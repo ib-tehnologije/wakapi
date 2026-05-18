@@ -9,6 +9,7 @@ import {promisify} from "node:util";
 const execFileAsync = promisify(execFile);
 const fallbackSummaryMaxChars = 180;
 const fillerSummaries = new Set(["yes", "yep", "ok", "okay", "done", "sure", "youreright", "youareright"]);
+const evidenceFilePattern = /(?:^|[\s"'=:(])((?:\.{1,2}\/)?[A-Za-z0-9._@~+-][A-Za-z0-9._@~+/-]*\.(?:cs|go|mjs|cjs|js|jsx|ts|tsx|json|ya?ml|toml|sql|pas|dfm|dart|md|sh|bash|zsh|ps1|csproj|sln|props|targets|graphql|proto|rs|py|rb|php|java|kt|swift|css|scss|html|xml|txt|ini|conf|env|service))(?:[:#]\d+)?(?=$|[\s"'`,);])/gi;
 
 export async function handleHook(payload, env = process.env, deps = {}) {
   const now = deps.now ?? (() => new Date());
@@ -204,6 +205,11 @@ function taskToSessionPayload(task) {
 }
 
 function fallbackSummary(task) {
+  const evidenceSummary = evidenceFallbackSummary(task);
+  if (evidenceSummary) {
+    return evidenceSummary;
+  }
+
   const assistantSummary = assistantFallbackSummary(task.last_assistant_message);
   if (assistantSummary) {
     return assistantSummary;
@@ -224,16 +230,97 @@ function assistantFallbackSummary(value) {
     return usefulSummary(ensureSentence(jsonSummary), fallbackSummaryMaxChars);
   }
 
-  const withoutCode = raw.replace(/```[\s\S]*?```/g, " ");
-  const paragraphs = withoutCode
-    .split(/\n\s*\n/)
-    .map(cleanSummaryText)
-    .filter(Boolean);
-  const candidate = paragraphs[0] || cleanSummaryText(withoutCode);
-  if (!candidate) {
+  return "";
+}
+
+function evidenceFallbackSummary(task) {
+  const changedFiles = [];
+  const inspectedFiles = [];
+
+  for (const item of task.evidence || []) {
+    const evidence = String(item || "").trim();
+    if (!evidence) {
+      continue;
+    }
+    if (evidence.startsWith("command:")) {
+      addUnique(inspectedFiles, extractFilesFromCommand(evidence.slice("command:".length)));
+      continue;
+    }
+    addUnique(changedFiles, [evidence]);
+  }
+
+  for (const event of task.events || []) {
+    const command = String(event?.command || "").trim();
+    if (!command) {
+      continue;
+    }
+    const patchFiles = extractPatchFiles(command);
+    if (patchFiles.length > 0 || event?.tool_name === "apply_patch") {
+      addUnique(changedFiles, patchFiles);
+      continue;
+    }
+    addUnique(inspectedFiles, extractFilesFromCommand(command));
+  }
+
+  if (changedFiles.length > 0) {
+    return fileSummary("Updated", changedFiles.slice(0, 1), fallbackSummaryMaxChars);
+  }
+  if (inspectedFiles.length > 0) {
+    return fileSummary("Inspected", inspectedFiles.slice(0, 2), fallbackSummaryMaxChars);
+  }
+  return "";
+}
+
+function extractPatchFiles(command) {
+  const files = [];
+  const regex = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm;
+  let match;
+  while ((match = regex.exec(command)) !== null) {
+    addUnique(files, [match[1]]);
+  }
+  return files;
+}
+
+function extractFilesFromCommand(command) {
+  const files = [];
+  let match;
+  evidenceFilePattern.lastIndex = 0;
+  while ((match = evidenceFilePattern.exec(String(command || ""))) !== null) {
+    addUnique(files, [match[1]]);
+  }
+  return files;
+}
+
+function addUnique(target, values) {
+  for (const value of values || []) {
+    const file = cleanEvidenceFile(value);
+    if (file && !target.includes(file)) {
+      target.push(file);
+    }
+  }
+}
+
+function cleanEvidenceFile(value) {
+  const file = String(value || "")
+    .trim()
+    .replace(/^["'`]+|["'`,.;)]+$/g, "")
+    .replace(/^\.\//, "");
+  if (!file || file.includes("://") || file.includes("node_modules/") || file.includes("/.git/")) {
     return "";
   }
-  return usefulSummary(firstSentence(candidate), fallbackSummaryMaxChars);
+  return file;
+}
+
+function fileSummary(verb, files, maxChars) {
+  const cleanFiles = [];
+  addUnique(cleanFiles, files);
+  if (cleanFiles.length === 0) {
+    return "";
+  }
+
+  const label = cleanFiles.length === 1 ? cleanFiles[0] : `${cleanFiles[0]} and ${cleanFiles[1]}`;
+  const summary = `${verb} ${label}.`;
+  return summary.length <= maxChars ? summary : `${verb} ${path.basename(cleanFiles[0])}.`;
 }
 
 function summaryFromJson(value) {
@@ -284,7 +371,33 @@ function ensureSentence(value) {
 function usefulSummary(value, maxChars) {
   const summary = normalizeSummary(value, maxChars);
   const plain = summary.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-  return plain && !fillerSummaries.has(plain) ? summary : "";
+  return plain && !fillerSummaries.has(plain) && isUsefulWorkSummary(summary) ? summary : "";
+}
+
+function isUsefulWorkSummary(value) {
+  const summary = String(value || "").trim();
+  if (!summary) {
+    return false;
+  }
+
+  const lower = summary.toLowerCase();
+  if (lower === "..." || lower.startsWith("rad s codexom na projektu ")) {
+    return false;
+  }
+  if (/^(?:you|you're|you are|your|i|i'm|i am|i've|i have|we|we're|we are)\b/.test(lower)) {
+    return false;
+  }
+  if (/^(?:yes|yep|no|ok|okay|sure|done|right|exactly|correct)\b/.test(lower)) {
+    return false;
+  }
+  if (/^(?:checked|patched|fixed|updated|changed|reviewed|worked on|handled|investigated|debugged|cleaned)(?:\s+(?:it|this|that))?[.!?]?$/.test(lower)) {
+    return false;
+  }
+  if (/^(?:checked and patched|checked and fixed|patched and checked|fixed and checked)\s+(?:it|this|that)[.!?]?$/.test(lower)) {
+    return false;
+  }
+
+  return true;
 }
 
 async function addHumanSummary(task, env, deps = {}) {
@@ -296,7 +409,7 @@ async function addHumanSummary(task, env, deps = {}) {
   try {
     const summary = await summarizeTask(task, env, deps);
     const normalized = normalizeSummary(summary, summaryMaxChars(env));
-    if (normalized) {
+    if (usefulSummary(normalized, summaryMaxChars(env))) {
       task.summary_hr = normalized;
     }
   } catch {

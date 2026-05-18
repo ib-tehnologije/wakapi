@@ -69,10 +69,70 @@ func TestCodexTaskService_UpsertManyBuildsFallbackSummaryAndDuration(t *testing.
 	require.Len(t, created, 1)
 	assert.Equal(t, 750.0, created[0].DurationSeconds)
 	assert.Equal(t, models.CodexTaskSessionStatusClosed, created[0].Status)
-	assert.Equal(t, "Implemented a native Codex task endpoint and Onix sync.", created[0].SummaryHR)
+	assert.Equal(t, "Updated routes/api/codex_tasks.go.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "please implement codex task worklogs")
 	assert.Contains(t, created[0].TechnicalNote, "routes/api/codex_tasks.go")
 	assert.Equal(t, `{"tool_count":4}`, created[0].EvidenceJSON)
+}
+
+func TestCodexTaskService_UpsertManyPrefersEvidenceOverVagueProvidedSummary(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	started := time.Date(2026, 5, 14, 9, 0, 0, 0, time.UTC)
+	ended := started.Add(5 * time.Minute)
+	user := &models.User{ID: "user"}
+
+	created, err := sut.UpsertMany(user, []*CodexTaskSessionInput{{
+		ExternalKey:          "codex:local:thread-1:turn-1",
+		Project:              "wakapi",
+		StartedAt:            started,
+		EndedAt:              &ended,
+		SummaryHR:            "Checked and patched it.",
+		LastAssistantMessage: "Checked and patched it.",
+		Evidence:             []string{"routes/api/codex_tasks.go"},
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	assert.Equal(t, "Updated routes/api/codex_tasks.go.", created[0].SummaryHR)
+	assert.NotContains(t, created[0].SummaryHR, "Checked and patched it")
+}
+
+func TestCodexTaskService_UpsertManyPrefersEvidenceOverAssistantReply(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	started := time.Date(2026, 5, 14, 9, 0, 0, 0, time.UTC)
+	ended := started.Add(5 * time.Minute)
+	user := &models.User{ID: "user"}
+
+	created, err := sut.UpsertMany(user, []*CodexTaskSessionInput{{
+		ExternalKey:          "codex:local:thread-1:turn-1",
+		Project:              "IBTechK3SFleetRepo",
+		StartedAt:            started,
+		EndedAt:              &ended,
+		LastAssistantMessage: "You use it as a Kubernetes TCP gateway, not as a ZeroTier interface inside Grunf/onix-api.",
+		TechnicalEvidenceJSON: EncodeCodexEvidence(map[string]any{
+			"events": []map[string]any{
+				{
+					"hook_event_name": "PostToolUse",
+					"tool_name":       "Bash",
+					"command":         "sed -n '1,140p' 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-configmap.yaml",
+				},
+				{
+					"hook_event_name": "PostToolUse",
+					"tool_name":       "Bash",
+					"command":         "sed -n '1,120p' 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-service.yaml",
+				},
+			},
+		}),
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	assert.Equal(t, "Inspected 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-configmap.yaml and 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-service.yaml.", created[0].SummaryHR)
+	assert.NotContains(t, created[0].SummaryHR, "You use it as")
 }
 
 func TestCodexTaskService_UpsertManyBuildsFallbackSummaryFromAssistantTitleJSON(t *testing.T) {

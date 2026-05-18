@@ -152,9 +152,142 @@ test("Stop closes and queues a session when Wakapi credentials are missing", asy
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
     assert.equal(payload.sessions[0].external_key, "codex:local:thread-1:turn-1");
     assert.equal(payload.sessions[0].duration_seconds, 1200);
-    assert.equal(payload.sessions[0].summary_hr, "Implemented Codex task worklogs.");
+    assert.equal(payload.sessions[0].summary_hr, "Rad s Codexom na projektu OnixServer.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /sync codex worklogs/i);
     assert.equal(payload.sessions[0].last_assistant_message, "Implemented Codex task worklogs.");
+  });
+});
+
+test("Stop falls back to changed file evidence instead of vague generated text", async () => {
+  await withWorklogHome(async (home) => {
+    const env = {
+      ...testEnv(home),
+      CODEX_WORKLOG_SUMMARY_ENABLED: "1",
+    };
+    let current = now;
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+      summarizeTask: async () => "Checked and patched it.",
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        prompt: "raw user message should never become the visible summary",
+      },
+      env,
+      deps,
+    );
+
+    await handleHook(
+      {
+        hook_event_name: "PostToolUse",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        tool_name: "apply_patch",
+        tool_input: {
+          command: "*** Begin Patch\n*** Update File: routes/api/codex_tasks.go\n@@\n+test\n*** End Patch\n",
+        },
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:20:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "Stop",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        last_assistant_message: "Checked and patched it.",
+      },
+      env,
+      deps,
+    );
+
+    const queued = await readdir(path.join(home, "queue"));
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].summary_hr, "Updated routes/api/codex_tasks.go.");
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /checked and patched it/i);
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
+  });
+});
+
+test("Stop falls back to inspected file evidence instead of assistant reply text", async () => {
+  await withWorklogHome(async (home) => {
+    const env = testEnv(home);
+    let current = now;
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/IBTechK3SFleetRepo",
+        prompt: "raw user message should never become the visible summary",
+      },
+      env,
+      deps,
+    );
+
+    await handleHook(
+      {
+        hook_event_name: "PostToolUse",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/IBTechK3SFleetRepo",
+        tool_name: "Bash",
+        tool_input: {
+          command: "sed -n '1,140p' 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-configmap.yaml",
+        },
+      },
+      env,
+      deps,
+    );
+
+    await handleHook(
+      {
+        hook_event_name: "PostToolUse",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/IBTechK3SFleetRepo",
+        tool_name: "Bash",
+        tool_input: {
+          command: "sed -n '1,120p' 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-service.yaml",
+        },
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:20:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "Stop",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/IBTechK3SFleetRepo",
+        last_assistant_message: "You use it as a Kubernetes TCP gateway, not as a ZeroTier interface inside Grunf/onix-api.",
+      },
+      env,
+      deps,
+    );
+
+    const queued = await readdir(path.join(home, "queue"));
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].summary_hr, "Inspected 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-configmap.yaml and 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-service.yaml.");
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /you use it as/i);
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
   });
 });
 
