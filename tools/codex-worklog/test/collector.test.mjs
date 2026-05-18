@@ -152,7 +152,7 @@ test("Stop closes and queues a session when Wakapi credentials are missing", asy
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
     assert.equal(payload.sessions[0].external_key, "codex:local:thread-1:turn-1");
     assert.equal(payload.sessions[0].duration_seconds, 1200);
-    assert.equal(payload.sessions[0].summary_hr, "Codex session without captured evidence.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex sesija bez zabilježenog konteksta.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /sync codex worklogs/i);
     assert.equal(payload.sessions[0].last_assistant_message, "Implemented Codex task worklogs.");
   });
@@ -213,7 +213,7 @@ test("Stop falls back to changed file evidence instead of vague generated text",
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Updated routes/api/codex_tasks.go.");
+    assert.equal(payload.sessions[0].summary_hr, "Ažurirano routes/api/codex_tasks.go.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /checked and patched it/i);
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
   });
@@ -285,7 +285,7 @@ test("Stop falls back to inspected file evidence instead of assistant reply text
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Inspected 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-configmap.yaml and 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-service.yaml.");
+    assert.equal(payload.sessions[0].summary_hr, "Pregledano 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-configmap.yaml i 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-service.yaml.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /you use it as/i);
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
   });
@@ -342,7 +342,7 @@ test("Stop falls back to command category evidence when no files are captured", 
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Checked Kubernetes resources.");
+    assert.equal(payload.sessions[0].summary_hr, "Provjereni Kubernetes resursi.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /rad s codexom|patch applied/i);
   });
 });
@@ -396,12 +396,12 @@ test("Stop falls back to tool category evidence when command text is absent", as
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Checked database state.");
+    assert.equal(payload.sessions[0].summary_hr, "Provjereno stanje baze podataka.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /rad s codexom|good/i);
   });
 });
 
-test("Stop falls back to a clean title from assistant JSON", async () => {
+test("Stop skips English title from assistant JSON", async () => {
   await withWorklogHome(async (home) => {
     const env = testEnv(home);
     let current = now;
@@ -437,13 +437,13 @@ test("Stop falls back to a clean title from assistant JSON", async () => {
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Review URA migration flow.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex sesija bez zabilježenog konteksta.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
     assert.doesNotMatch(payload.sessions[0].summary_hr, /title/i);
   });
 });
 
-test("Stop falls back to a clean message from assistant JSON", async () => {
+test("Stop skips English message from assistant JSON", async () => {
   await withWorklogHome(async (home) => {
     const env = testEnv(home);
     let current = now;
@@ -479,9 +479,54 @@ test("Stop falls back to a clean message from assistant JSON", async () => {
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Add hide action for TeamViewer sessions.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex sesija bez zabilježenog konteksta.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
     assert.doesNotMatch(payload.sessions[0].summary_hr, /message/i);
+  });
+});
+
+test("Stop accepts Croatian generated summaries only", async () => {
+  await withWorklogHome(async (home) => {
+    const env = {
+      ...testEnv(home),
+      CODEX_WORKLOG_SUMMARY_ENABLED: "1",
+    };
+    let current = now;
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+      summarizeTask: async () => "Generated via Codex summary.",
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        prompt: "summarize Codex worklogs",
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:20:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "Stop",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        last_assistant_message: "",
+      },
+      env,
+      deps,
+    );
+
+    const queued = await readdir(path.join(home, "queue"));
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].summary_hr, "Codex sesija bez zabilježenog konteksta.");
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /generated via/i);
   });
 });
 
@@ -521,7 +566,7 @@ test("Stop skips useless assistant fallback text", async () => {
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Codex session without captured evidence.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex sesija bez zabilježenog konteksta.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /^\\.\\.\\.$/);
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
   });
@@ -563,7 +608,7 @@ test("Stop skips filler assistant acknowledgements", async () => {
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Codex session without captured evidence.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex sesija bez zabilježenog konteksta.");
     assert.notEqual(payload.sessions[0].summary_hr, "You're right.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
   });
@@ -582,7 +627,7 @@ test("Stop includes a generated human summary in the queued session", async () =
       summarizeTask: async (task) => {
         assert.equal(task.project, "wakapi");
         assert.equal(task.prompt, "add LLM summaries to Codex worklogs");
-        return "Added Codex worklog LLM summaries.";
+        return "Dodan LLM sažetak Codex workloga.";
       },
     };
 
@@ -614,7 +659,7 @@ test("Stop includes a generated human summary in the queued session", async () =
     const queued = await readdir(path.join(home, "queue"));
     assert.equal(queued.length, 1);
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Added Codex worklog LLM summaries.");
+    assert.equal(payload.sessions[0].summary_hr, "Dodan LLM sažetak Codex workloga.");
   });
 });
 
@@ -636,7 +681,7 @@ test("Stop invokes Codex summary generation with the low model and recursion gua
         execCall = {command, args, options};
         const outputIndex = args.indexOf("--output-last-message");
         await mkdir(path.dirname(args[outputIndex + 1]), {recursive: true});
-        await writeFile(args[outputIndex + 1], "Generated via Codex summary.");
+        await writeFile(args[outputIndex + 1], "Generiran Codex sažetak rada.");
         return {stdout: "", stderr: ""};
       },
     };
@@ -681,10 +726,11 @@ test("Stop invokes Codex summary generation with the low model and recursion gua
     ]);
     assert.ok(execCall.args.includes("--sandbox"));
     assert.ok(execCall.args.includes("read-only"));
+    assert.match(execCall.args.at(-1), /Croatian only/);
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Generated via Codex summary.");
+    assert.equal(payload.sessions[0].summary_hr, "Generiran Codex sažetak rada.");
   });
 });
 

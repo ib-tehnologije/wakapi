@@ -10,6 +10,7 @@ const execFileAsync = promisify(execFile);
 const fallbackSummaryMaxChars = 180;
 const fillerSummaries = new Set(["yes", "yep", "ok", "okay", "done", "sure", "youreright", "youareright"]);
 const evidenceFilePattern = /(?:^|[\s"'=:(])((?:\.{1,2}\/)?[A-Za-z0-9._@~+-][A-Za-z0-9._@~+/-]*\.(?:cs|go|mjs|cjs|js|jsx|ts|tsx|json|ya?ml|toml|sql|pas|dfm|dart|md|sh|bash|zsh|ps1|csproj|sln|props|targets|graphql|proto|rs|py|rb|php|java|kt|swift|css|scss|html|xml|txt|ini|conf|env|service))(?:[:#]\d+)?(?=$|[\s"'`,);])/gi;
+const croatianSummaryPattern = /[čćđšž]|(?:^|[^\p{L}\p{N}])(?:ažuriran|azuriran|pregledan|provjeren|dodan|dodana|dodano|dodane|popravljen|popravljena|popravljeno|uklonjen|uklonjena|obrisan|obrisani|istražen|istrazen|pokrenut|generiran|implementiran|sinkronizacij|sesija|sažetak|sazetak|stanje|baze|podataka|resursi|repozitorij|repozitorija|migracij|tijek|skrivan|commitan|pushan)(?=$|[^\p{L}\p{N}])/iu;
 
 export async function handleHook(payload, env = process.env, deps = {}) {
   const now = deps.now ?? (() => new Date());
@@ -215,7 +216,7 @@ function fallbackSummary(task) {
     return assistantSummary;
   }
 
-  return "Codex session without captured evidence.";
+  return "Codex sesija bez zabilježenog konteksta.";
 }
 
 function assistantFallbackSummary(value) {
@@ -269,10 +270,10 @@ function evidenceFallbackSummary(task) {
   }
 
   if (changedFiles.length > 0) {
-    return fileSummary("Updated", changedFiles.slice(0, 1), fallbackSummaryMaxChars);
+    return fileSummary("Ažurirano", changedFiles.slice(0, 1), fallbackSummaryMaxChars);
   }
   if (inspectedFiles.length > 0) {
-    return fileSummary("Inspected", inspectedFiles.slice(0, 2), fallbackSummaryMaxChars);
+    return fileSummary("Pregledano", inspectedFiles.slice(0, 2), fallbackSummaryMaxChars);
   }
   if (commands.length > 0) {
     return commandCategorySummary(commands);
@@ -283,19 +284,19 @@ function evidenceFallbackSummary(task) {
 function commandCategorySummary(commands) {
   const joined = commands.join("\n").toLowerCase();
   if (/\bkubectl\b/.test(joined)) {
-    return "Checked Kubernetes resources.";
+    return "Provjereni Kubernetes resursi.";
   }
   if (/\b(psql|sqlcmd|execute_sql|mcp__mssql)\b/.test(joined)) {
-    return "Checked database state.";
+    return "Provjereno stanje baze podataka.";
   }
   if (/(?:db_query|database_query|company_db_query)/.test(joined)) {
-    return "Checked database state.";
+    return "Provjereno stanje baze podataka.";
   }
   if (/\b(gh\s+(run|workflow|actions?)|git\s+)/.test(joined)) {
-    return "Checked repository state.";
+    return "Provjereno stanje repozitorija.";
   }
   if (/\b(npm|yarn|pnpm|dotnet|go)\s+(test|build|run)\b/.test(joined)) {
-    return "Ran project checks.";
+    return "Pokrenute projektne provjere.";
   }
   return "";
 }
@@ -347,7 +348,7 @@ function fileSummary(verb, files, maxChars) {
     return "";
   }
 
-  const label = cleanFiles.length === 1 ? cleanFiles[0] : `${cleanFiles[0]} and ${cleanFiles[1]}`;
+  const label = cleanFiles.length === 1 ? cleanFiles[0] : `${cleanFiles[0]} i ${cleanFiles[1]}`;
   const summary = `${verb} ${label}.`;
   return summary.length <= maxChars ? summary : `${verb} ${path.basename(cleanFiles[0])}.`;
 }
@@ -400,7 +401,11 @@ function ensureSentence(value) {
 function usefulSummary(value, maxChars) {
   const summary = normalizeSummary(value, maxChars);
   const plain = summary.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-  return plain && !fillerSummaries.has(plain) && isUsefulWorkSummary(summary) ? summary : "";
+  return plain && !fillerSummaries.has(plain) && isUsefulWorkSummary(summary) && isLikelyCroatianSummary(summary) ? summary : "";
+}
+
+function isLikelyCroatianSummary(value) {
+  return croatianSummaryPattern.test(String(value || ""));
 }
 
 function isUsefulWorkSummary(value) {
@@ -508,7 +513,7 @@ function summaryPrompt(task) {
 
   const evidence = (task.evidence || []).slice(0, 12).map((item) => `- ${item}`).join("\n");
   return [
-    "Write one concise human worklog summary for Wakapi in Croatian or English, matching the user's language when obvious.",
+    "Write one concise human worklog summary for Wakapi in Croatian only.",
     "Return only the summary text. No markdown, no bullets, no quotes.",
     "Keep it under 180 characters. Mention concrete work, not internal tool mechanics.",
     "",

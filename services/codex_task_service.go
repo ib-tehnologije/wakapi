@@ -74,6 +74,7 @@ var (
 	codexVagueSummaryPattern = regexp.MustCompile(`^(?:checked|patched|fixed|updated|changed|reviewed|worked on|handled|investigated|debugged|cleaned)(?:\s+(?:it|this|that))?[.!?]?$|^(?:checked and patched|checked and fixed|patched and checked|fixed and checked)\s+(?:it|this|that)[.!?]?$`)
 	codexPatchAppliedPattern = regexp.MustCompile(`^(?:patch applied successfully|corrective patch is applied(?: and verified)?)[.!?]?$`)
 	codexFillerSummaries     = map[string]bool{"yes": true, "yep": true, "ok": true, "okay": true, "done": true, "sure": true, "youreright": true, "youareright": true}
+	codexCroatianTokens      = []string{"č", "ć", "đ", "š", "ž", "ažuriran", "azuriran", "pregledan", "provjeren", "dodan", "dodana", "dodano", "dodane", "popravljen", "popravljena", "popravljeno", "uklonjen", "uklonjena", "obrisan", "obrisani", "istražen", "istrazen", "pokrenut", "generiran", "implementiran", "sinkronizacij", "sesija", "sažetak", "sazetak", "stanje", "baze", "podataka", "resursi", "repozitorij", "repozitorija", "migracij", "tijek", "skrivan", "commitan", "pushan"}
 )
 
 func NewCodexTaskService(repository codexTaskSessionRepository) *CodexTaskService {
@@ -210,7 +211,7 @@ func buildCodexSummary(input *CodexTaskSessionInput) string {
 		return summary
 	}
 
-	return "Codex session without captured evidence."
+	return "Codex sesija bez zabilježenog konteksta."
 }
 
 func assistantFallbackSummary(value string, max int) string {
@@ -263,10 +264,10 @@ func codexEvidenceSummary(input *CodexTaskSessionInput) string {
 	}
 
 	if len(changedFiles) > 0 {
-		return codexFileSummary("Updated", changedFiles, 1, 180)
+		return codexFileSummary("Ažurirano", changedFiles, 1, 180)
 	}
 	if len(inspectedFiles) > 0 {
-		return codexFileSummary("Inspected", inspectedFiles, 2, 180)
+		return codexFileSummary("Pregledano", inspectedFiles, 2, 180)
 	}
 	if len(commands) > 0 {
 		return codexCommandCategorySummary(commands)
@@ -277,19 +278,19 @@ func codexEvidenceSummary(input *CodexTaskSessionInput) string {
 func codexCommandCategorySummary(commands []string) string {
 	joined := strings.ToLower(strings.Join(commands, "\n"))
 	if regexp.MustCompile(`\bkubectl\b`).MatchString(joined) {
-		return "Checked Kubernetes resources."
+		return "Provjereni Kubernetes resursi."
 	}
 	if regexp.MustCompile(`\b(psql|sqlcmd|execute_sql|mcp__mssql)\b`).MatchString(joined) {
-		return "Checked database state."
+		return "Provjereno stanje baze podataka."
 	}
 	if regexp.MustCompile(`(?:db_query|database_query|company_db_query)`).MatchString(joined) {
-		return "Checked database state."
+		return "Provjereno stanje baze podataka."
 	}
 	if regexp.MustCompile(`\b(gh\s+(run|workflow|actions?)|git\s+)`).MatchString(joined) {
-		return "Checked repository state."
+		return "Provjereno stanje repozitorija."
 	}
 	if regexp.MustCompile(`\b(npm|yarn|pnpm|dotnet|go)\s+(test|build|run)\b`).MatchString(joined) {
-		return "Ran project checks."
+		return "Pokrenute projektne provjere."
 	}
 	return ""
 }
@@ -379,7 +380,7 @@ func codexFileSummary(verb string, files []string, maxFiles int, maxChars int) s
 
 	label := cleanFiles[0]
 	if maxFiles > 1 {
-		label = cleanFiles[0] + " and " + cleanFiles[1]
+		label = cleanFiles[0] + " i " + cleanFiles[1]
 	}
 	summary := fmt.Sprintf("%s %s.", verb, label)
 	if len([]rune(summary)) <= maxChars {
@@ -478,10 +479,20 @@ func usefulCodexSummary(value string, max int) string {
 		}
 	}
 	key := plain.String()
-	if key == "" || codexFillerSummaries[key] || !isUsefulCodexWorkSummary(summary) {
+	if key == "" || codexFillerSummaries[key] || !isUsefulCodexWorkSummary(summary) || !isLikelyCroatianCodexSummary(summary) {
 		return ""
 	}
 	return summary
+}
+
+func isLikelyCroatianCodexSummary(value string) bool {
+	lower := strings.ToLower(value)
+	for _, token := range codexCroatianTokens {
+		if strings.Contains(lower, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func isUsefulCodexWorkSummary(value string) bool {

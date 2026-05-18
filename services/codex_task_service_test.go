@@ -69,7 +69,7 @@ func TestCodexTaskService_UpsertManyBuildsFallbackSummaryAndDuration(t *testing.
 	require.Len(t, created, 1)
 	assert.Equal(t, 750.0, created[0].DurationSeconds)
 	assert.Equal(t, models.CodexTaskSessionStatusClosed, created[0].Status)
-	assert.Equal(t, "Updated routes/api/codex_tasks.go.", created[0].SummaryHR)
+	assert.Equal(t, "Ažurirano routes/api/codex_tasks.go.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "please implement codex task worklogs")
 	assert.Contains(t, created[0].TechnicalNote, "routes/api/codex_tasks.go")
 	assert.Equal(t, `{"tool_count":4}`, created[0].EvidenceJSON)
@@ -95,7 +95,7 @@ func TestCodexTaskService_UpsertManyPrefersEvidenceOverVagueProvidedSummary(t *t
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Updated routes/api/codex_tasks.go.", created[0].SummaryHR)
+	assert.Equal(t, "Ažurirano routes/api/codex_tasks.go.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "Checked and patched it")
 }
 
@@ -131,7 +131,7 @@ func TestCodexTaskService_UpsertManyPrefersEvidenceOverAssistantReply(t *testing
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Inspected 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-configmap.yaml and 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-service.yaml.", created[0].SummaryHR)
+	assert.Equal(t, "Pregledano 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-configmap.yaml i 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-service.yaml.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "You use it as")
 }
 
@@ -162,7 +162,7 @@ func TestCodexTaskService_UpsertManyUsesCommandCategoryWhenNoFilesWereCaptured(t
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Checked Kubernetes resources.", created[0].SummaryHR)
+	assert.Equal(t, "Provjereni Kubernetes resursi.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "Patch applied")
 }
 
@@ -192,11 +192,11 @@ func TestCodexTaskService_UpsertManyUsesToolCategoryWhenCommandTextIsAbsent(t *t
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Checked database state.", created[0].SummaryHR)
+	assert.Equal(t, "Provjereno stanje baze podataka.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "Good")
 }
 
-func TestCodexTaskService_UpsertManyBuildsFallbackSummaryFromAssistantTitleJSON(t *testing.T) {
+func TestCodexTaskService_UpsertManySkipsEnglishAssistantTitleJSON(t *testing.T) {
 	repo := newInMemoryCodexTaskRepository()
 	sut := NewCodexTaskService(repo)
 
@@ -215,12 +215,12 @@ func TestCodexTaskService_UpsertManyBuildsFallbackSummaryFromAssistantTitleJSON(
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Review URA migration flow.", created[0].SummaryHR)
+	assert.Equal(t, "Codex sesija bez zabilježenog konteksta.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "raw user message")
 	assert.NotContains(t, created[0].SummaryHR, "title")
 }
 
-func TestCodexTaskService_UpsertManyBuildsFallbackSummaryFromAssistantMessageJSON(t *testing.T) {
+func TestCodexTaskService_UpsertManySkipsEnglishAssistantMessageJSON(t *testing.T) {
 	repo := newInMemoryCodexTaskRepository()
 	sut := NewCodexTaskService(repo)
 
@@ -239,9 +239,32 @@ func TestCodexTaskService_UpsertManyBuildsFallbackSummaryFromAssistantMessageJSO
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Add hide action for TeamViewer sessions.", created[0].SummaryHR)
+	assert.Equal(t, "Codex sesija bez zabilježenog konteksta.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "raw user message")
 	assert.NotContains(t, created[0].SummaryHR, "message")
+}
+
+func TestCodexTaskService_UpsertManySkipsEnglishProvidedSummary(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	started := time.Date(2026, 5, 14, 9, 0, 0, 0, time.UTC)
+	ended := started.Add(5 * time.Minute)
+	user := &models.User{ID: "user"}
+
+	created, err := sut.UpsertMany(user, []*CodexTaskSessionInput{{
+		ExternalKey: "codex:local:thread-1:turn-1",
+		Project:     "wakapi",
+		StartedAt:   started,
+		EndedAt:     &ended,
+		Prompt:      "raw user message should never become the visible summary",
+		SummaryHR:   "Generated via Codex summary.",
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	assert.Equal(t, "Codex sesija bez zabilježenog konteksta.", created[0].SummaryHR)
+	assert.NotContains(t, created[0].SummaryHR, "Generated via")
 }
 
 func TestCodexTaskService_UpsertManySkipsUselessAssistantFallbackText(t *testing.T) {
@@ -263,7 +286,7 @@ func TestCodexTaskService_UpsertManySkipsUselessAssistantFallbackText(t *testing
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Codex session without captured evidence.", created[0].SummaryHR)
+	assert.Equal(t, "Codex sesija bez zabilježenog konteksta.", created[0].SummaryHR)
 	assert.NotEqual(t, "...", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "raw user message")
 }
@@ -287,7 +310,7 @@ func TestCodexTaskService_UpsertManySkipsFillerAssistantAcknowledgements(t *test
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Codex session without captured evidence.", created[0].SummaryHR)
+	assert.Equal(t, "Codex sesija bez zabilježenog konteksta.", created[0].SummaryHR)
 	assert.NotEqual(t, "You're right.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "raw user message")
 }
