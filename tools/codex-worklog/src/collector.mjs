@@ -218,9 +218,9 @@ function assistantFallbackSummary(value) {
     return "";
   }
 
-  const title = titleFromJson(raw);
-  if (title) {
-    return normalizeSummary(ensureSentence(title), fallbackSummaryMaxChars);
+  const jsonSummary = summaryFromJson(raw);
+  if (jsonSummary) {
+    return usefulSummary(ensureSentence(jsonSummary), fallbackSummaryMaxChars);
   }
 
   const withoutCode = raw.replace(/```[\s\S]*?```/g, " ");
@@ -232,14 +232,20 @@ function assistantFallbackSummary(value) {
   if (!candidate) {
     return "";
   }
-  return normalizeSummary(firstSentence(candidate), fallbackSummaryMaxChars);
+  return usefulSummary(firstSentence(candidate), fallbackSummaryMaxChars);
 }
 
-function titleFromJson(value) {
+function summaryFromJson(value) {
   try {
     const parsed = JSON.parse(value);
     if (parsed && typeof parsed.title === "string") {
       return parsed.title.trim();
+    }
+    if (parsed && typeof parsed.message === "string") {
+      return parsed.message.trim();
+    }
+    if (parsed && typeof parsed.summary === "string") {
+      return parsed.summary.trim();
     }
   } catch {
     return "";
@@ -272,6 +278,11 @@ function firstSentence(value) {
 function ensureSentence(value) {
   const text = String(value || "").trim();
   return text && !/[.!?]$/.test(text) ? `${text}.` : text;
+}
+
+function usefulSummary(value, maxChars) {
+  const summary = normalizeSummary(value, maxChars);
+  return /[\p{L}\p{N}]/u.test(summary) ? summary : "";
 }
 
 async function addHumanSummary(task, env, deps = {}) {

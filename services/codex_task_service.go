@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gofrs/uuid/v5"
 	"github.com/muety/wakapi/models"
@@ -212,8 +213,8 @@ func assistantFallbackSummary(value string, max int) string {
 		return ""
 	}
 
-	if title := titleFromJSON(raw); title != "" {
-		return normalizeCodexSummary(ensureCodexSentence(title), max)
+	if jsonSummary := summaryFromJSON(raw); jsonSummary != "" {
+		return usefulCodexSummary(ensureCodexSentence(jsonSummary), max)
 	}
 
 	withoutCode := codexFencedCodePattern.ReplaceAllString(raw, " ")
@@ -221,7 +222,7 @@ func assistantFallbackSummary(value string, max int) string {
 	for _, paragraph := range strings.Split(withoutCode, "\n\n") {
 		candidate := cleanCodexSummaryText(paragraph)
 		if candidate != "" {
-			return normalizeCodexSummary(firstCodexSentence(candidate), max)
+			return usefulCodexSummary(firstCodexSentence(candidate), max)
 		}
 	}
 
@@ -229,21 +230,28 @@ func assistantFallbackSummary(value string, max int) string {
 	if candidate == "" {
 		return ""
 	}
-	return normalizeCodexSummary(firstCodexSentence(candidate), max)
+	return usefulCodexSummary(firstCodexSentence(candidate), max)
 }
 
-func titleFromJSON(value string) string {
+func summaryFromJSON(value string) string {
 	if !strings.HasPrefix(value, "{") || !strings.HasSuffix(value, "}") {
 		return ""
 	}
 
 	var payload struct {
-		Title string `json:"title"`
+		Title   string `json:"title"`
+		Message string `json:"message"`
+		Summary string `json:"summary"`
 	}
 	if err := json.Unmarshal([]byte(value), &payload); err != nil {
 		return ""
 	}
-	return strings.TrimSpace(payload.Title)
+	for _, value := range []string{payload.Title, payload.Message, payload.Summary} {
+		if value := strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func cleanCodexSummaryText(value string) string {
@@ -304,6 +312,16 @@ func normalizeCodexSummary(value string, max int) string {
 		return string(runes[:max])
 	}
 	return strings.TrimSpace(string(runes[:max-3])) + "..."
+}
+
+func usefulCodexSummary(value string, max int) string {
+	summary := normalizeCodexSummary(value, max)
+	for _, r := range summary {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return summary
+		}
+	}
+	return ""
 }
 
 func buildCodexTechnicalNote(input *CodexTaskSessionInput) string {

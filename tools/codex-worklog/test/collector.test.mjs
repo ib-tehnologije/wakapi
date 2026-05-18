@@ -200,6 +200,90 @@ test("Stop falls back to a clean title from assistant JSON", async () => {
   });
 });
 
+test("Stop falls back to a clean message from assistant JSON", async () => {
+  await withWorklogHome(async (home) => {
+    const env = testEnv(home);
+    let current = now;
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/OnixServer",
+        prompt: "raw user message should never become the visible summary",
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:20:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "Stop",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/OnixServer",
+        last_assistant_message: "{\"message\":\"Add hide action for TeamViewer sessions\"}",
+      },
+      env,
+      deps,
+    );
+
+    const queued = await readdir(path.join(home, "queue"));
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].summary_hr, "Add hide action for TeamViewer sessions.");
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /message/i);
+  });
+});
+
+test("Stop skips useless assistant fallback text", async () => {
+  await withWorklogHome(async (home) => {
+    const env = testEnv(home);
+    let current = now;
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/URA",
+        prompt: "raw user message should never become the visible summary",
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:20:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "Stop",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/URA",
+        last_assistant_message: "...",
+      },
+      env,
+      deps,
+    );
+
+    const queued = await readdir(path.join(home, "queue"));
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].summary_hr, "Rad s Codexom na projektu URA.");
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /^\\.\\.\\.$/);
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
+  });
+});
+
 test("Stop includes a generated human summary in the queued session", async () => {
   await withWorklogHome(async (home) => {
     const env = {
