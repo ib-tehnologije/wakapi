@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/gofrs/uuid/v5"
 	"github.com/muety/wakapi/models"
@@ -188,22 +186,10 @@ func (s *CodexTaskService) buildSession(user *models.User, input *CodexTaskSessi
 func buildCodexSummary(input *CodexTaskSessionInput) string {
 	project := strings.TrimSpace(input.Project)
 	if project == "" {
-		project = "projektu"
+		project = "nepoznatom projektu"
 	}
 
-	work := normalizeSentence(input.Prompt)
-	if work == "" {
-		work = normalizeSentence(input.LastAssistantMessage)
-	}
-	if work == "" {
-		work = "obraden je Codex zadatak"
-	}
-
-	summary := fmt.Sprintf("Rad na projektu %s: %s.", project, strings.TrimSuffix(work, "."))
-	if len(input.Evidence) > 0 {
-		summary += fmt.Sprintf(" Zabiljezene su aktivnosti na: %s.", strings.Join(limitStrings(input.Evidence, 3), ", "))
-	}
-	return summary
+	return fmt.Sprintf("Rad s Codexom na projektu %s.", project)
 }
 
 func buildCodexTechnicalNote(input *CodexTaskSessionInput) string {
@@ -221,34 +207,6 @@ func buildCodexTechnicalNote(input *CodexTaskSessionInput) string {
 		parts = append(parts, "Codex evidence: no captured tool evidence.")
 	}
 	return strings.Join(parts, " ")
-}
-
-func normalizeSentence(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	s = strings.Join(strings.Fields(s), " ")
-	s = strings.TrimPrefix(strings.ToLower(s), "please ")
-	replacements := map[string]string{
-		"codex":    "Codex",
-		"grunf":    "Grunf",
-		"wakapi":   "Wakapi",
-		"wakatime": "WakaTime",
-		"onix":     "Onix",
-	}
-	for old, replacement := range replacements {
-		s = strings.ReplaceAll(s, old, replacement)
-	}
-	return capitalizeFirst(s)
-}
-
-func capitalizeFirst(s string) string {
-	r, size := utf8.DecodeRuneInString(s)
-	if r == utf8.RuneError {
-		return s
-	}
-	return string(unicode.ToUpper(r)) + s[size:]
 }
 
 func limitStrings(values []string, max int) []string {

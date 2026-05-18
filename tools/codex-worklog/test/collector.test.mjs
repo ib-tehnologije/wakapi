@@ -152,6 +152,8 @@ test("Stop closes and queues a session when Wakapi credentials are missing", asy
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
     assert.equal(payload.sessions[0].external_key, "codex:local:thread-1:turn-1");
     assert.equal(payload.sessions[0].duration_seconds, 1200);
+    assert.equal(payload.sessions[0].summary_hr, "Rad s Codexom na projektu OnixServer.");
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /sync codex worklogs/i);
     assert.equal(payload.sessions[0].last_assistant_message, "Implemented Codex task worklogs.");
   });
 });

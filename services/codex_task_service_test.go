@@ -69,8 +69,8 @@ func TestCodexTaskService_UpsertManyBuildsFallbackSummaryAndDuration(t *testing.
 	require.Len(t, created, 1)
 	assert.Equal(t, 750.0, created[0].DurationSeconds)
 	assert.Equal(t, models.CodexTaskSessionStatusClosed, created[0].Status)
-	assert.Contains(t, created[0].SummaryHR, "Rad na projektu OnixServer")
-	assert.Contains(t, created[0].SummaryHR, "Codex task worklogs")
+	assert.Equal(t, "Rad s Codexom na projektu OnixServer.", created[0].SummaryHR)
+	assert.NotContains(t, created[0].SummaryHR, "please implement codex task worklogs")
 	assert.Contains(t, created[0].TechnicalNote, "routes/api/codex_tasks.go")
 	assert.Equal(t, `{"tool_count":4}`, created[0].EvidenceJSON)
 }

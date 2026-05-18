@@ -189,7 +189,7 @@ function taskToSessionPayload(task) {
     ended_at: task.ended_at,
     duration_seconds: task.duration_seconds || 0,
     status: task.status,
-    summary_hr: task.summary_hr || "",
+    summary_hr: task.summary_hr || fallbackSummary(task),
     prompt: task.prompt,
     last_assistant_message: task.last_assistant_message,
     evidence: task.evidence || [],
@@ -199,6 +199,11 @@ function taskToSessionPayload(task) {
       turn_id: task.turn_id,
     },
   };
+}
+
+function fallbackSummary(task) {
+  const project = String(task.project || "").trim() || "nepoznatom projektu";
+  return `Rad s Codexom na projektu ${project}.`;
 }
 
 async function addHumanSummary(task, env, deps = {}) {
