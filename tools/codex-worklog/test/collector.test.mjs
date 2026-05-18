@@ -347,6 +347,60 @@ test("Stop falls back to command category evidence when no files are captured", 
   });
 });
 
+test("Stop falls back to tool category evidence when command text is absent", async () => {
+  await withWorklogHome(async (home) => {
+    const env = testEnv(home);
+    let current = now;
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/URA",
+        prompt: "check URA customer data",
+      },
+      env,
+      deps,
+    );
+
+    await handleHook(
+      {
+        hook_event_name: "PostToolUse",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/URA",
+        tool_name: "mcp__onix_support_ticketing__onix_support_company_db_query",
+        tool_input: {},
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:20:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "Stop",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/URA",
+        last_assistant_message: "Good.",
+      },
+      env,
+      deps,
+    );
+
+    const queued = await readdir(path.join(home, "queue"));
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].summary_hr, "Checked database state.");
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /rad s codexom|good/i);
+  });
+});
+
 test("Stop falls back to a clean title from assistant JSON", async () => {
   await withWorklogHome(async (home) => {
     const env = testEnv(home);

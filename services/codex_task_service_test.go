@@ -166,6 +166,36 @@ func TestCodexTaskService_UpsertManyUsesCommandCategoryWhenNoFilesWereCaptured(t
 	assert.NotContains(t, created[0].SummaryHR, "Patch applied")
 }
 
+func TestCodexTaskService_UpsertManyUsesToolCategoryWhenCommandTextIsAbsent(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	started := time.Date(2026, 5, 14, 9, 0, 0, 0, time.UTC)
+	ended := started.Add(5 * time.Minute)
+	user := &models.User{ID: "user"}
+
+	created, err := sut.UpsertMany(user, []*CodexTaskSessionInput{{
+		ExternalKey: "codex:local:thread-1:turn-1",
+		Project:     "URA",
+		StartedAt:   started,
+		EndedAt:     &ended,
+		SummaryHR:   "Good.",
+		TechnicalEvidenceJSON: EncodeCodexEvidence(map[string]any{
+			"events": []map[string]any{
+				{
+					"hook_event_name": "PostToolUse",
+					"tool_name":       "mcp__onix_support_ticketing__onix_support_company_db_query",
+				},
+			},
+		}),
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	assert.Equal(t, "Checked database state.", created[0].SummaryHR)
+	assert.NotContains(t, created[0].SummaryHR, "Good")
+}
+
 func TestCodexTaskService_UpsertManyBuildsFallbackSummaryFromAssistantTitleJSON(t *testing.T) {
 	repo := newInMemoryCodexTaskRepository()
 	sut := NewCodexTaskService(repo)

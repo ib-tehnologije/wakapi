@@ -254,13 +254,16 @@ function evidenceFallbackSummary(task) {
 
   for (const event of task.events || []) {
     const command = String(event?.command || "").trim();
-    if (!command) {
-      continue;
+    const signal = `${event?.tool_name || ""} ${command}`.trim();
+    if (signal) {
+      commands.push(signal);
     }
-    commands.push(command);
     const patchFiles = extractPatchFiles(command);
     if (patchFiles.length > 0 || event?.tool_name === "apply_patch") {
       addUnique(changedFiles, patchFiles);
+      continue;
+    }
+    if (!command) {
       continue;
     }
     addUnique(inspectedFiles, extractFilesFromCommand(command));
@@ -284,6 +287,9 @@ function commandCategorySummary(commands) {
     return "Checked Kubernetes resources.";
   }
   if (/\b(psql|sqlcmd|execute_sql|mcp__mssql)\b/.test(joined)) {
+    return "Checked database state.";
+  }
+  if (/(?:db_query|database_query|company_db_query)/.test(joined)) {
     return "Checked database state.";
   }
   if (/\b(gh\s+(run|workflow|actions?)|git\s+)/.test(joined)) {
@@ -412,6 +418,9 @@ function isUsefulWorkSummary(value) {
     return false;
   }
   if (/^(?:yes|yep|no|ok|okay|sure|done|right|exactly|correct)\b/.test(lower)) {
+    return false;
+  }
+  if (/^(?:good|great)\b/.test(lower)) {
     return false;
   }
   if (/^(?:checked|patched|fixed|updated|changed|reviewed|worked on|handled|investigated|debugged|cleaned)(?:\s+(?:it|this|that))?[.!?]?$/.test(lower)) {

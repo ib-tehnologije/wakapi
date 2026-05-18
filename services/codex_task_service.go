@@ -252,13 +252,16 @@ func codexEvidenceSummary(input *CodexTaskSessionInput) string {
 
 	for _, event := range codexTechnicalEvidenceEvents(input.TechnicalEvidenceJSON) {
 		command := strings.TrimSpace(event.Command)
-		if command == "" {
-			continue
+		signal := strings.TrimSpace(strings.TrimSpace(event.ToolName) + " " + command)
+		if signal != "" {
+			commands = append(commands, signal)
 		}
-		commands = append(commands, command)
 		patchFiles := extractCodexPatchFiles(command)
 		if len(patchFiles) > 0 || event.ToolName == "apply_patch" {
 			addCodexEvidenceFiles(&changedFiles, patchFiles)
+			continue
+		}
+		if command == "" {
 			continue
 		}
 		addCodexEvidenceFiles(&inspectedFiles, extractCodexCommandFiles(command))
@@ -282,6 +285,9 @@ func codexCommandCategorySummary(commands []string) string {
 		return "Checked Kubernetes resources."
 	}
 	if regexp.MustCompile(`\b(psql|sqlcmd|execute_sql|mcp__mssql)\b`).MatchString(joined) {
+		return "Checked database state."
+	}
+	if regexp.MustCompile(`(?:db_query|database_query|company_db_query)`).MatchString(joined) {
 		return "Checked database state."
 	}
 	if regexp.MustCompile(`\b(gh\s+(run|workflow|actions?)|git\s+)`).MatchString(joined) {
@@ -501,6 +507,9 @@ func isUsefulCodexWorkSummary(value string) bool {
 		strings.HasPrefix(lower, "okay ") || strings.HasPrefix(lower, "sure ") ||
 		strings.HasPrefix(lower, "done ") || strings.HasPrefix(lower, "right ") ||
 		strings.HasPrefix(lower, "exactly ") || strings.HasPrefix(lower, "correct ") {
+		return false
+	}
+	if strings.HasPrefix(lower, "good") || strings.HasPrefix(lower, "great") {
 		return false
 	}
 	if codexVagueSummaryPattern.MatchString(lower) {
