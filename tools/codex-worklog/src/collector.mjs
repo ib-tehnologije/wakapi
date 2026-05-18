@@ -8,6 +8,7 @@ import {promisify} from "node:util";
 
 const execFileAsync = promisify(execFile);
 const fallbackSummaryMaxChars = 180;
+const fillerSummaries = new Set(["yes", "yep", "ok", "okay", "done", "sure"]);
 
 export async function handleHook(payload, env = process.env, deps = {}) {
   const now = deps.now ?? (() => new Date());
@@ -282,7 +283,8 @@ function ensureSentence(value) {
 
 function usefulSummary(value, maxChars) {
   const summary = normalizeSummary(value, maxChars);
-  return /[\p{L}\p{N}]/u.test(summary) ? summary : "";
+  const plain = summary.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  return plain && !fillerSummaries.has(plain) ? summary : "";
 }
 
 async function addHumanSummary(task, env, deps = {}) {

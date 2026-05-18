@@ -147,6 +147,30 @@ func TestCodexTaskService_UpsertManySkipsUselessAssistantFallbackText(t *testing
 	assert.NotContains(t, created[0].SummaryHR, "raw user message")
 }
 
+func TestCodexTaskService_UpsertManySkipsFillerAssistantAcknowledgements(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	started := time.Date(2026, 5, 14, 9, 0, 0, 0, time.UTC)
+	ended := started.Add(5 * time.Minute)
+	user := &models.User{ID: "user"}
+
+	created, err := sut.UpsertMany(user, []*CodexTaskSessionInput{{
+		ExternalKey:          "codex:local:thread-1:turn-1",
+		Project:              "OnixServer",
+		StartedAt:            started,
+		EndedAt:              &ended,
+		Prompt:               "raw user message should never become the visible summary",
+		LastAssistantMessage: "Yep.",
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	assert.Equal(t, "Rad s Codexom na projektu OnixServer.", created[0].SummaryHR)
+	assert.NotEqual(t, "Yep.", created[0].SummaryHR)
+	assert.NotContains(t, created[0].SummaryHR, "raw user message")
+}
+
 func TestCodexTaskService_GetWorklogsReturnsClosedTaskShape(t *testing.T) {
 	repo := newInMemoryCodexTaskRepository()
 	sut := NewCodexTaskService(repo)

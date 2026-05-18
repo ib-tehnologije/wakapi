@@ -67,6 +67,7 @@ var (
 	codexHeadingPattern      = regexp.MustCompile(`^#{1,6}\s+`)
 	codexListPattern         = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+`)
 	codexWhitespacePattern   = regexp.MustCompile(`\s+`)
+	codexFillerSummaries     = map[string]bool{"yes": true, "yep": true, "ok": true, "okay": true, "done": true, "sure": true}
 )
 
 func NewCodexTaskService(repository codexTaskSessionRepository) *CodexTaskService {
@@ -316,12 +317,17 @@ func normalizeCodexSummary(value string, max int) string {
 
 func usefulCodexSummary(value string, max int) string {
 	summary := normalizeCodexSummary(value, max)
+	plain := strings.Builder{}
 	for _, r := range summary {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			return summary
+			plain.WriteRune(unicode.ToLower(r))
 		}
 	}
-	return ""
+	key := plain.String()
+	if key == "" || codexFillerSummaries[key] {
+		return ""
+	}
+	return summary
 }
 
 func buildCodexTechnicalNote(input *CodexTaskSessionInput) string {
