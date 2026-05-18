@@ -312,7 +312,7 @@ test("Stop skips filler assistant acknowledgements", async () => {
         session_id: "thread-1",
         turn_id: "turn-1",
         cwd: "/Users/igbenic/Projects/OnixServer",
-        last_assistant_message: "Yep.",
+        last_assistant_message: "You're right.",
       },
       env,
       deps,
@@ -321,7 +321,7 @@ test("Stop skips filler assistant acknowledgements", async () => {
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
     assert.equal(payload.sessions[0].summary_hr, "Rad s Codexom na projektu OnixServer.");
-    assert.notEqual(payload.sessions[0].summary_hr, "Yep.");
+    assert.notEqual(payload.sessions[0].summary_hr, "You're right.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
   });
 });

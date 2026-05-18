@@ -8,7 +8,7 @@ import {promisify} from "node:util";
 
 const execFileAsync = promisify(execFile);
 const fallbackSummaryMaxChars = 180;
-const fillerSummaries = new Set(["yes", "yep", "ok", "okay", "done", "sure"]);
+const fillerSummaries = new Set(["yes", "yep", "ok", "okay", "done", "sure", "youreright", "youareright"]);
 
 export async function handleHook(payload, env = process.env, deps = {}) {
   const now = deps.now ?? (() => new Date());

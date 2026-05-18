@@ -67,7 +67,7 @@ var (
 	codexHeadingPattern      = regexp.MustCompile(`^#{1,6}\s+`)
 	codexListPattern         = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+`)
 	codexWhitespacePattern   = regexp.MustCompile(`\s+`)
-	codexFillerSummaries     = map[string]bool{"yes": true, "yep": true, "ok": true, "okay": true, "done": true, "sure": true}
+	codexFillerSummaries     = map[string]bool{"yes": true, "yep": true, "ok": true, "okay": true, "done": true, "sure": true, "youreright": true, "youareright": true}
 )
 
 func NewCodexTaskService(repository codexTaskSessionRepository) *CodexTaskService {

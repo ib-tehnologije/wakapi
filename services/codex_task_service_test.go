@@ -161,13 +161,13 @@ func TestCodexTaskService_UpsertManySkipsFillerAssistantAcknowledgements(t *test
 		StartedAt:            started,
 		EndedAt:              &ended,
 		Prompt:               "raw user message should never become the visible summary",
-		LastAssistantMessage: "Yep.",
+		LastAssistantMessage: "You're right.",
 	}})
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
 	assert.Equal(t, "Rad s Codexom na projektu OnixServer.", created[0].SummaryHR)
-	assert.NotEqual(t, "Yep.", created[0].SummaryHR)
+	assert.NotEqual(t, "You're right.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "raw user message")
 }
 
