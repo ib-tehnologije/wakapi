@@ -210,12 +210,7 @@ func buildCodexSummary(input *CodexTaskSessionInput) string {
 		return summary
 	}
 
-	project := strings.TrimSpace(input.Project)
-	if project == "" {
-		project = "nepoznatom projektu"
-	}
-
-	return fmt.Sprintf("Rad s Codexom na projektu %s.", project)
+	return "Codex session without captured evidence."
 }
 
 func assistantFallbackSummary(value string, max int) string {

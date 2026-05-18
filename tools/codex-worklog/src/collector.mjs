@@ -215,8 +215,7 @@ function fallbackSummary(task) {
     return assistantSummary;
   }
 
-  const project = String(task.project || "").trim() || "nepoznatom projektu";
-  return `Rad s Codexom na projektu ${project}.`;
+  return "Codex session without captured evidence.";
 }
 
 function assistantFallbackSummary(value) {

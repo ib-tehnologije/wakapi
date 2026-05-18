@@ -263,7 +263,7 @@ func TestCodexTaskService_UpsertManySkipsUselessAssistantFallbackText(t *testing
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Rad s Codexom na projektu URA.", created[0].SummaryHR)
+	assert.Equal(t, "Codex session without captured evidence.", created[0].SummaryHR)
 	assert.NotEqual(t, "...", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "raw user message")
 }
@@ -287,7 +287,7 @@ func TestCodexTaskService_UpsertManySkipsFillerAssistantAcknowledgements(t *test
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Rad s Codexom na projektu OnixServer.", created[0].SummaryHR)
+	assert.Equal(t, "Codex session without captured evidence.", created[0].SummaryHR)
 	assert.NotEqual(t, "You're right.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "raw user message")
 }

@@ -152,7 +152,7 @@ test("Stop closes and queues a session when Wakapi credentials are missing", asy
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
     assert.equal(payload.sessions[0].external_key, "codex:local:thread-1:turn-1");
     assert.equal(payload.sessions[0].duration_seconds, 1200);
-    assert.equal(payload.sessions[0].summary_hr, "Rad s Codexom na projektu OnixServer.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex session without captured evidence.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /sync codex worklogs/i);
     assert.equal(payload.sessions[0].last_assistant_message, "Implemented Codex task worklogs.");
   });
@@ -521,7 +521,7 @@ test("Stop skips useless assistant fallback text", async () => {
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Rad s Codexom na projektu URA.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex session without captured evidence.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /^\\.\\.\\.$/);
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
   });
@@ -563,7 +563,7 @@ test("Stop skips filler assistant acknowledgements", async () => {
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Rad s Codexom na projektu OnixServer.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex session without captured evidence.");
     assert.notEqual(payload.sessions[0].summary_hr, "You're right.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
   });
