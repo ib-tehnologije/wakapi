@@ -135,6 +135,37 @@ func TestCodexTaskService_UpsertManyPrefersEvidenceOverAssistantReply(t *testing
 	assert.NotContains(t, created[0].SummaryHR, "You use it as")
 }
 
+func TestCodexTaskService_UpsertManyUsesCommandCategoryWhenNoFilesWereCaptured(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	started := time.Date(2026, 5, 14, 9, 0, 0, 0, time.UTC)
+	ended := started.Add(5 * time.Minute)
+	user := &models.User{ID: "user"}
+
+	created, err := sut.UpsertMany(user, []*CodexTaskSessionInput{{
+		ExternalKey: "codex:local:thread-1:turn-1",
+		Project:     "IBTechK3SFleetRepo",
+		StartedAt:   started,
+		EndedAt:     &ended,
+		SummaryHR:   "Patch applied successfully.",
+		TechnicalEvidenceJSON: EncodeCodexEvidence(map[string]any{
+			"events": []map[string]any{
+				{
+					"hook_event_name": "PostToolUse",
+					"tool_name":       "Bash",
+					"command":         "kubectl -n wakapi-system get deploy wakapi-backend-deployment",
+				},
+			},
+		}),
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	assert.Equal(t, "Checked Kubernetes resources.", created[0].SummaryHR)
+	assert.NotContains(t, created[0].SummaryHR, "Patch applied")
+}
+
 func TestCodexTaskService_UpsertManyBuildsFallbackSummaryFromAssistantTitleJSON(t *testing.T) {
 	repo := newInMemoryCodexTaskRepository()
 	sut := NewCodexTaskService(repo)

@@ -72,6 +72,7 @@ var (
 	codexPatchFilePattern    = regexp.MustCompile(`(?m)^\*\*\* (?:Add|Update|Delete) File: (.+)$`)
 	codexReplyPrefixPattern  = regexp.MustCompile(`^(?:you|you're|you are|your|i|i'm|i am|i've|i have|we|we're|we are)\b`)
 	codexVagueSummaryPattern = regexp.MustCompile(`^(?:checked|patched|fixed|updated|changed|reviewed|worked on|handled|investigated|debugged|cleaned)(?:\s+(?:it|this|that))?[.!?]?$|^(?:checked and patched|checked and fixed|patched and checked|fixed and checked)\s+(?:it|this|that)[.!?]?$`)
+	codexPatchAppliedPattern = regexp.MustCompile(`^(?:patch applied successfully|corrective patch is applied(?: and verified)?)[.!?]?$`)
 	codexFillerSummaries     = map[string]bool{"yes": true, "yep": true, "ok": true, "okay": true, "done": true, "sure": true, "youreright": true, "youareright": true}
 )
 
@@ -233,6 +234,7 @@ func assistantFallbackSummary(value string, max int) string {
 func codexEvidenceSummary(input *CodexTaskSessionInput) string {
 	changedFiles := []string{}
 	inspectedFiles := []string{}
+	commands := []string{}
 
 	for _, item := range input.Evidence {
 		evidence := strings.TrimSpace(item)
@@ -240,7 +242,9 @@ func codexEvidenceSummary(input *CodexTaskSessionInput) string {
 			continue
 		}
 		if strings.HasPrefix(evidence, "command:") {
-			addCodexEvidenceFiles(&inspectedFiles, extractCodexCommandFiles(strings.TrimSpace(strings.TrimPrefix(evidence, "command:"))))
+			command := strings.TrimSpace(strings.TrimPrefix(evidence, "command:"))
+			commands = append(commands, command)
+			addCodexEvidenceFiles(&inspectedFiles, extractCodexCommandFiles(command))
 			continue
 		}
 		addCodexEvidenceFiles(&changedFiles, []string{evidence})
@@ -251,6 +255,7 @@ func codexEvidenceSummary(input *CodexTaskSessionInput) string {
 		if command == "" {
 			continue
 		}
+		commands = append(commands, command)
 		patchFiles := extractCodexPatchFiles(command)
 		if len(patchFiles) > 0 || event.ToolName == "apply_patch" {
 			addCodexEvidenceFiles(&changedFiles, patchFiles)
@@ -264,6 +269,26 @@ func codexEvidenceSummary(input *CodexTaskSessionInput) string {
 	}
 	if len(inspectedFiles) > 0 {
 		return codexFileSummary("Inspected", inspectedFiles, 2, 180)
+	}
+	if len(commands) > 0 {
+		return codexCommandCategorySummary(commands)
+	}
+	return ""
+}
+
+func codexCommandCategorySummary(commands []string) string {
+	joined := strings.ToLower(strings.Join(commands, "\n"))
+	if regexp.MustCompile(`\bkubectl\b`).MatchString(joined) {
+		return "Checked Kubernetes resources."
+	}
+	if regexp.MustCompile(`\b(psql|sqlcmd|execute_sql|mcp__mssql)\b`).MatchString(joined) {
+		return "Checked database state."
+	}
+	if regexp.MustCompile(`\b(gh\s+(run|workflow|actions?)|git\s+)`).MatchString(joined) {
+		return "Checked repository state."
+	}
+	if regexp.MustCompile(`\b(npm|yarn|pnpm|dotnet|go)\s+(test|build|run)\b`).MatchString(joined) {
+		return "Ran project checks."
 	}
 	return ""
 }
@@ -479,6 +504,9 @@ func isUsefulCodexWorkSummary(value string) bool {
 		return false
 	}
 	if codexVagueSummaryPattern.MatchString(lower) {
+		return false
+	}
+	if codexPatchAppliedPattern.MatchString(lower) {
 		return false
 	}
 	return true

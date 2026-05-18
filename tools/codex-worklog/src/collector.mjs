@@ -236,6 +236,7 @@ function assistantFallbackSummary(value) {
 function evidenceFallbackSummary(task) {
   const changedFiles = [];
   const inspectedFiles = [];
+  const commands = [];
 
   for (const item of task.evidence || []) {
     const evidence = String(item || "").trim();
@@ -243,7 +244,9 @@ function evidenceFallbackSummary(task) {
       continue;
     }
     if (evidence.startsWith("command:")) {
-      addUnique(inspectedFiles, extractFilesFromCommand(evidence.slice("command:".length)));
+      const command = evidence.slice("command:".length);
+      commands.push(command);
+      addUnique(inspectedFiles, extractFilesFromCommand(command));
       continue;
     }
     addUnique(changedFiles, [evidence]);
@@ -254,6 +257,7 @@ function evidenceFallbackSummary(task) {
     if (!command) {
       continue;
     }
+    commands.push(command);
     const patchFiles = extractPatchFiles(command);
     if (patchFiles.length > 0 || event?.tool_name === "apply_patch") {
       addUnique(changedFiles, patchFiles);
@@ -267,6 +271,26 @@ function evidenceFallbackSummary(task) {
   }
   if (inspectedFiles.length > 0) {
     return fileSummary("Inspected", inspectedFiles.slice(0, 2), fallbackSummaryMaxChars);
+  }
+  if (commands.length > 0) {
+    return commandCategorySummary(commands);
+  }
+  return "";
+}
+
+function commandCategorySummary(commands) {
+  const joined = commands.join("\n").toLowerCase();
+  if (/\bkubectl\b/.test(joined)) {
+    return "Checked Kubernetes resources.";
+  }
+  if (/\b(psql|sqlcmd|execute_sql|mcp__mssql)\b/.test(joined)) {
+    return "Checked database state.";
+  }
+  if (/\b(gh\s+(run|workflow|actions?)|git\s+)/.test(joined)) {
+    return "Checked repository state.";
+  }
+  if (/\b(npm|yarn|pnpm|dotnet|go)\s+(test|build|run)\b/.test(joined)) {
+    return "Ran project checks.";
   }
   return "";
 }
@@ -394,6 +418,9 @@ function isUsefulWorkSummary(value) {
     return false;
   }
   if (/^(?:checked and patched|checked and fixed|patched and checked|fixed and checked)\s+(?:it|this|that)[.!?]?$/.test(lower)) {
+    return false;
+  }
+  if (/^(?:patch applied successfully|corrective patch is applied(?: and verified)?)[.!?]?$/.test(lower)) {
     return false;
   }
 

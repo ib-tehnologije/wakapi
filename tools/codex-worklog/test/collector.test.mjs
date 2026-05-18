@@ -291,6 +291,62 @@ test("Stop falls back to inspected file evidence instead of assistant reply text
   });
 });
 
+test("Stop falls back to command category evidence when no files are captured", async () => {
+  await withWorklogHome(async (home) => {
+    const env = testEnv(home);
+    let current = now;
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/IBTechK3SFleetRepo",
+        prompt: "is wakapi deployed",
+      },
+      env,
+      deps,
+    );
+
+    await handleHook(
+      {
+        hook_event_name: "PostToolUse",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/IBTechK3SFleetRepo",
+        tool_name: "Bash",
+        tool_input: {
+          command: "kubectl -n wakapi-system get deploy wakapi-backend-deployment",
+        },
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:20:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "Stop",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/IBTechK3SFleetRepo",
+        last_assistant_message: "Patch applied successfully.",
+      },
+      env,
+      deps,
+    );
+
+    const queued = await readdir(path.join(home, "queue"));
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].summary_hr, "Checked Kubernetes resources.");
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /rad s codexom|patch applied/i);
+  });
+});
+
 test("Stop falls back to a clean title from assistant JSON", async () => {
   await withWorklogHome(async (home) => {
     const env = testEnv(home);
