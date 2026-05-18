@@ -122,7 +122,7 @@ func TestCodexTaskApiHandler_GetOnixWorklogs(t *testing.T) {
 	assert.NoError(t, err)
 	user := &models.User{ID: "user", ApiKey: "apikey", Location: tz.String()}
 	userService := new(mocks.UserServiceMock)
-	userService.On("GetUserByKey", user.ApiKey, true).Return(user, nil)
+	userService.On("GetUserByKey", user.ApiKey, false).Return(user, nil)
 
 	started := time.Date(2026, 5, 14, 9, 0, 0, 0, tz)
 	ended := started.Add(21*time.Minute + 30*time.Second)
@@ -173,4 +173,33 @@ func TestCodexTaskApiHandler_GetOnixWorklogs(t *testing.T) {
 
 	userService.AssertExpectations(t)
 	userService.AssertNotCalled(t, "GetUserById", mock.Anything)
+}
+
+func TestCodexTaskApiHandler_GetOnixWorklogs_AllowsReadOnlyApiKey(t *testing.T) {
+	config.Set(config.Empty())
+
+	tz, err := time.LoadLocation("Europe/Zagreb")
+	assert.NoError(t, err)
+	user := &models.User{ID: "user", ApiKey: "readonly-key", Location: tz.String()}
+	userService := new(mocks.UserServiceMock)
+	userService.On("GetUserByKey", user.ApiKey, false).Return(user, nil)
+
+	codexService := &stubCodexTaskService{}
+	handler := NewCodexTaskApiHandler(userService, codexService)
+
+	router := chi.NewRouter()
+	apiRouter := chi.NewRouter()
+	apiRouter.Use(middlewares.NewSharedDataMiddleware())
+	handler.RegisterRoutes(apiRouter)
+	router.Mount("/api", apiRouter)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/compat/onix/v1/users/current/worklogs?start=2026-05-14&end=2026-05-14&source=codex&project=OnixServer", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(user.ApiKey)))
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "OnixServer", codexService.project)
+	userService.AssertExpectations(t)
 }

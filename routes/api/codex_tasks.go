@@ -31,6 +31,10 @@ func (h *CodexTaskApiHandler) RegisterRoutes(router chi.Router) {
 		r.Use(middlewares.NewAuthenticateMiddleware(h.userSrvc).WithFullAccessOnly(true).Handler)
 		r.Post("/integrations/codex/task-sessions", h.PostTaskSessions)
 		r.Post("/integrations/codex/task-sessions.bulk", h.PostTaskSessions)
+	})
+
+	router.Group(func(r chi.Router) {
+		r.Use(middlewares.NewAuthenticateMiddleware(h.userSrvc).Handler)
 		r.Get("/compat/onix/v1/users/{user}/worklogs", h.GetOnixWorklogs)
 	})
 }
