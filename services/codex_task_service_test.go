@@ -415,3 +415,73 @@ func TestCodexTaskService_GetWorklogsGroupsClosedTurnsByChatProjectAndDay(t *tes
 	assert.Contains(t, worklogs[0].TechnicalNote, "codex:local:thread-1:turn-1")
 	assert.Contains(t, worklogs[0].TechnicalNote, "codex:local:thread-1:turn-2")
 }
+
+func TestCodexTaskService_GetWorklogsSkipsTinyTurnsWithoutEvidence(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	dayStart := time.Date(2026, 5, 14, 0, 0, 0, 0, time.UTC)
+	dayEnd := time.Date(2026, 5, 14, 23, 59, 59, 0, time.UTC)
+	started := time.Date(2026, 5, 14, 9, 0, 0, 0, time.UTC)
+	tinyEnd := started.Add(5 * time.Second)
+	realStart := started.Add(1 * time.Minute)
+	realEnd := realStart.Add(10 * time.Minute)
+	user := &models.User{ID: "user"}
+
+	_, err := sut.UpsertMany(user, []*CodexTaskSessionInput{
+		{
+			ExternalKey:           "codex:local:thread-tiny:turn-1",
+			Project:               "URA",
+			WorkspaceRoot:         "/Users/igbenic/Projects/URA",
+			StartedAt:             started,
+			EndedAt:               &tinyEnd,
+			DurationSeconds:       5,
+			TechnicalEvidenceJSON: `{"events":[],"session_id":"thread-tiny","turn_id":"turn-1"}`,
+		},
+		{
+			ExternalKey:     "codex:local:thread-real:turn-1",
+			Project:         "URA",
+			WorkspaceRoot:   "/Users/igbenic/Projects/URA",
+			StartedAt:       realStart,
+			EndedAt:         &realEnd,
+			DurationSeconds: 600,
+			SummaryHR:       "Ažurirano URA_TST/steps/15.sql.",
+		},
+	})
+	require.NoError(t, err)
+
+	worklogs, err := sut.GetWorklogs(user, &dayStart, &dayEnd, "URA")
+
+	require.NoError(t, err)
+	require.Len(t, worklogs, 1)
+	assert.Equal(t, "codex:chat:local:thread-real:20260514:URA", worklogs[0].ExternalKey)
+	assert.Equal(t, 600.0, worklogs[0].DurationSeconds)
+}
+
+func TestCodexTaskService_GetWorklogsKeepsTinyTurnsWithEvidence(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	started := time.Date(2026, 5, 14, 9, 0, 0, 0, time.UTC)
+	ended := started.Add(5 * time.Second)
+	user := &models.User{ID: "user"}
+
+	_, err := sut.UpsertMany(user, []*CodexTaskSessionInput{{
+		ExternalKey:     "codex:local:thread-short:turn-1",
+		Project:         "URA",
+		WorkspaceRoot:   "/Users/igbenic/Projects/URA",
+		StartedAt:       started,
+		EndedAt:         &ended,
+		DurationSeconds: 5,
+		Evidence:        []string{"command: SELECT TOP 1 * FROM Documents"},
+		SummaryHR:       "Provjereno stanje baze podataka.",
+	}})
+	require.NoError(t, err)
+
+	worklogs, err := sut.GetWorklogs(user, &started, &ended, "URA")
+
+	require.NoError(t, err)
+	require.Len(t, worklogs, 1)
+	assert.Equal(t, "codex:chat:local:thread-short:20260514:URA", worklogs[0].ExternalKey)
+	assert.Equal(t, 5.0, worklogs[0].DurationSeconds)
+}

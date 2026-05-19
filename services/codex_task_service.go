@@ -80,6 +80,7 @@ var (
 )
 
 const codexNoEvidenceSummary = "Codex sesija bez zabilježenog konteksta."
+const codexMinNoEvidenceWorklogSeconds = 30.0
 
 func NewCodexTaskService(repository codexTaskSessionRepository) *CodexTaskService {
 	return &CodexTaskService{repository: repository}
@@ -118,7 +119,7 @@ func (s *CodexTaskService) GetWorklogs(user *models.User, from, to *time.Time, p
 	groups := map[string][]*models.CodexTaskSession{}
 	groupOrder := make([]string, 0)
 	for _, session := range sessions {
-		if session.EndedAt == nil {
+		if !shouldIncludeCodexWorklogSession(session) {
 			continue
 		}
 		key := codexTaskWorklogGroupKey(session)
@@ -133,6 +134,42 @@ func (s *CodexTaskService) GetWorklogs(user *models.User, from, to *time.Time, p
 		worklogs = append(worklogs, buildCodexGroupedWorklog(key, groups[key]))
 	}
 	return worklogs, nil
+}
+
+func shouldIncludeCodexWorklogSession(session *models.CodexTaskSession) bool {
+	if session == nil || session.EndedAt == nil {
+		return false
+	}
+	if hasCodexSessionEvidence(session) {
+		return true
+	}
+	return session.DurationSeconds >= codexMinNoEvidenceWorklogSeconds
+}
+
+func hasCodexSessionEvidence(session *models.CodexTaskSession) bool {
+	note := strings.ToLower(session.TechnicalNote)
+	if strings.Contains(note, "codex evidence:") && !strings.Contains(note, "no captured tool evidence") {
+		return true
+	}
+
+	raw := strings.TrimSpace(session.EvidenceJSON)
+	if raw == "" || raw == "null" || raw == "[]" || raw == "{}" {
+		return false
+	}
+
+	var evidence []any
+	if err := json.Unmarshal([]byte(raw), &evidence); err == nil {
+		return len(evidence) > 0
+	}
+
+	var technicalEvidence struct {
+		Events []any `json:"events"`
+	}
+	if err := json.Unmarshal([]byte(raw), &technicalEvidence); err == nil {
+		return len(technicalEvidence.Events) > 0
+	}
+
+	return false
 }
 
 func buildCodexGroupedWorklog(key string, sessions []*models.CodexTaskSession) *CodexTaskWorklog {
