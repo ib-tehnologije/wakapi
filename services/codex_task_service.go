@@ -1,11 +1,13 @@
 package services
 
 import (
+	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -77,6 +79,8 @@ var (
 	codexCroatianTokens      = []string{"č", "ć", "đ", "š", "ž", "ažuriran", "azuriran", "pregledan", "provjeren", "dodan", "dodana", "dodano", "dodane", "popravljen", "popravljena", "popravljeno", "uklonjen", "uklonjena", "obrisan", "obrisani", "istražen", "istrazen", "pokrenut", "generiran", "implementiran", "sinkronizacij", "sesija", "sažetak", "sazetak", "stanje", "baze", "podataka", "resursi", "repozitorij", "repozitorija", "migracij", "tijek", "skrivan", "commitan", "pushan"}
 )
 
+const codexNoEvidenceSummary = "Codex sesija bez zabilježenog konteksta."
+
 func NewCodexTaskService(repository codexTaskSessionRepository) *CodexTaskService {
 	return &CodexTaskService{repository: repository}
 }
@@ -107,28 +111,219 @@ func (s *CodexTaskService) GetWorklogs(user *models.User, from, to *time.Time, p
 		return nil, err
 	}
 
-	worklogs := make([]*CodexTaskWorklog, 0, len(sessions))
+	sort.SliceStable(sessions, func(i, j int) bool {
+		return sessions[i].StartedAt.T().Before(sessions[j].StartedAt.T())
+	})
+
+	groups := map[string][]*models.CodexTaskSession{}
+	groupOrder := make([]string, 0)
 	for _, session := range sessions {
 		if session.EndedAt == nil {
 			continue
 		}
-		worklogs = append(worklogs, &CodexTaskWorklog{
-			ID:              session.ID,
-			ExternalKey:     session.ExternalKey,
-			Project:         session.Project,
-			Source:          models.CodexTaskWorklogSource,
-			StartedAt:       session.StartedAt.T(),
-			EndedAt:         session.EndedAt.T(),
-			DurationSeconds: session.DurationSeconds,
-			Summary:         session.SummaryHR,
-			TechnicalNote:   session.TechnicalNote,
-			WorkspaceRoot:   session.WorkspaceRoot,
-			Repository:      session.Repository,
-			Branch:          session.Branch,
-			Status:          session.Status,
-		})
+		key := codexTaskWorklogGroupKey(session)
+		if _, ok := groups[key]; !ok {
+			groupOrder = append(groupOrder, key)
+		}
+		groups[key] = append(groups[key], session)
+	}
+
+	worklogs := make([]*CodexTaskWorklog, 0, len(groupOrder))
+	for _, key := range groupOrder {
+		worklogs = append(worklogs, buildCodexGroupedWorklog(key, groups[key]))
 	}
 	return worklogs, nil
+}
+
+func buildCodexGroupedWorklog(key string, sessions []*models.CodexTaskSession) *CodexTaskWorklog {
+	first := sessions[0]
+	startedAt := first.StartedAt.T()
+	endedAt := first.EndedAt.T()
+	duration := 0.0
+	workspaceRoot := first.WorkspaceRoot
+	repository := first.Repository
+	branch := first.Branch
+
+	for _, session := range sessions {
+		start := session.StartedAt.T()
+		end := session.EndedAt.T()
+		if start.Before(startedAt) {
+			startedAt = start
+		}
+		if end.After(endedAt) {
+			endedAt = end
+		}
+		duration += session.DurationSeconds
+		workspaceRoot = lastNonEmptyString(workspaceRoot, session.WorkspaceRoot)
+		repository = lastNonEmptyString(repository, session.Repository)
+		branch = lastNonEmptyString(branch, session.Branch)
+	}
+
+	return &CodexTaskWorklog{
+		ID:              "codex-chat-" + shortCodexHash(key),
+		ExternalKey:     key,
+		Project:         first.Project,
+		Source:          models.CodexTaskWorklogSource,
+		StartedAt:       startedAt,
+		EndedAt:         endedAt,
+		DurationSeconds: duration,
+		Summary:         buildCodexGroupedSummary(first.Project, sessions),
+		TechnicalNote:   buildCodexGroupedTechnicalNote(sessions),
+		WorkspaceRoot:   workspaceRoot,
+		Repository:      repository,
+		Branch:          branch,
+		Status:          models.CodexTaskSessionStatusClosed,
+	}
+}
+
+func codexTaskWorklogGroupKey(session *models.CodexTaskSession) string {
+	installation, chat := codexChatExternalKeyParts(session.ExternalKey)
+	day := session.StartedAt.T().Format("20060102")
+	project := safeCodexExternalKeyPart(session.Project, 64)
+	return shortenCodexExternalKey(fmt.Sprintf("codex:chat:%s:%s:%s:%s", installation, chat, day, project), 240)
+}
+
+func codexChatExternalKeyParts(externalKey string) (string, string) {
+	parts := strings.Split(strings.TrimSpace(externalKey), ":")
+	if len(parts) >= 4 && strings.EqualFold(parts[0], "codex") {
+		return safeCodexExternalKeyPart(parts[1], 64), safeCodexExternalKeyPart(parts[2], 96)
+	}
+	return "external", safeCodexExternalKeyPart(externalKey, 96)
+}
+
+func buildCodexGroupedSummary(project string, sessions []*models.CodexTaskSession) string {
+	summaries := distinctCodexSessionSummaries(sessions)
+	if len(summaries) == 0 {
+		project = strings.TrimSpace(project)
+		if project == "" {
+			return "Codex chat bez zabilježenog konteksta."
+		}
+		return normalizeCodexSummary(fmt.Sprintf("Codex chat na projektu %s bez zabilježenog konteksta.", project), 220)
+	}
+	if len(summaries) == 1 {
+		return summaries[0]
+	}
+
+	maxItems := len(summaries)
+	if maxItems > 3 {
+		maxItems = 3
+	}
+	for count := maxItems; count >= 1; count-- {
+		parts := make([]string, 0, count+1)
+		for _, summary := range summaries[:count] {
+			parts = append(parts, trimCodexSentence(summary))
+		}
+		if remaining := len(summaries) - count; remaining > 0 {
+			parts = append(parts, fmt.Sprintf("još %d aktivnosti", remaining))
+		}
+		candidate := ensureCodexSentence("Codex chat: " + strings.Join(parts, "; "))
+		if len([]rune(candidate)) <= 220 {
+			return candidate
+		}
+	}
+	return normalizeCodexSummary("Codex chat: "+trimCodexSentence(summaries[0]), 220)
+}
+
+func distinctCodexSessionSummaries(sessions []*models.CodexTaskSession) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0)
+	for _, session := range sessions {
+		summary := strings.TrimSpace(session.SummaryHR)
+		if summary == "" || summary == codexNoEvidenceSummary {
+			continue
+		}
+		key := strings.ToLower(summary)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, summary)
+	}
+	return result
+}
+
+func buildCodexGroupedTechnicalNote(sessions []*models.CodexTaskSession) string {
+	if len(sessions) == 1 {
+		return sessions[0].TechnicalNote
+	}
+
+	lines := []string{fmt.Sprintf("Grupirano %d Codex turna iz istog chata.", len(sessions))}
+	for _, session := range sessions {
+		if session.EndedAt == nil {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s (%s - %s, %ds): %s",
+			session.ExternalKey,
+			session.StartedAt.T().Format(time.RFC3339),
+			session.EndedAt.T().Format(time.RFC3339),
+			int(session.DurationSeconds),
+			strings.TrimSpace(session.SummaryHR)))
+		if note := strings.TrimSpace(session.TechnicalNote); note != "" {
+			lines = append(lines, "  "+note)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func safeCodexExternalKeyPart(value string, max int) string {
+	value = strings.TrimSpace(value)
+	var b strings.Builder
+	previousDash := false
+	for _, r := range value {
+		allowed := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.'
+		if allowed {
+			b.WriteRune(r)
+			previousDash = false
+			continue
+		}
+		if !previousDash {
+			b.WriteRune('-')
+			previousDash = true
+		}
+	}
+	cleaned := strings.Trim(b.String(), "-")
+	if cleaned == "" {
+		cleaned = "unknown"
+	}
+	if max > 0 && len(cleaned) > max {
+		suffix := "-" + shortCodexHash(cleaned)
+		limit := max - len(suffix)
+		if limit < 1 {
+			limit = max
+			suffix = ""
+		}
+		cleaned = strings.Trim(cleaned[:limit], "-") + suffix
+	}
+	return cleaned
+}
+
+func shortenCodexExternalKey(value string, max int) string {
+	if max <= 0 || len(value) <= max {
+		return value
+	}
+	suffix := ":" + shortCodexHash(value)
+	limit := max - len(suffix)
+	if limit < 1 {
+		return shortCodexHash(value)
+	}
+	return strings.TrimRight(value[:limit], ":") + suffix
+}
+
+func shortCodexHash(value string) string {
+	sum := sha1.Sum([]byte(value))
+	return fmt.Sprintf("%x", sum)[:12]
+}
+
+func trimCodexSentence(value string) string {
+	return strings.TrimRight(strings.TrimSpace(value), ".!?")
+}
+
+func lastNonEmptyString(current string, candidate string) string {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return current
+	}
+	return candidate
 }
 
 func (s *CodexTaskService) buildSession(user *models.User, input *CodexTaskSessionInput) (*models.CodexTaskSession, error) {

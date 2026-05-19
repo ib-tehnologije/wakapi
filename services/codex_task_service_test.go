@@ -338,7 +338,80 @@ func TestCodexTaskService_GetWorklogsReturnsClosedTaskShape(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, worklogs, 1)
 	assert.Equal(t, "CodexTask", worklogs[0].Source)
-	assert.Equal(t, "codex:local:thread-1:turn-1", worklogs[0].ExternalKey)
+	assert.Equal(t, "codex:chat:local:thread-1:20260514:OnixServer", worklogs[0].ExternalKey)
 	assert.Equal(t, "Implementirana je sinkronizacija Codex zadataka.", worklogs[0].Summary)
 	assert.Equal(t, 600.0, worklogs[0].DurationSeconds)
+}
+
+func TestCodexTaskService_GetWorklogsGroupsClosedTurnsByChatProjectAndDay(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	dayStart := time.Date(2026, 5, 14, 0, 0, 0, 0, time.UTC)
+	dayEnd := time.Date(2026, 5, 14, 23, 59, 59, 0, time.UTC)
+	user := &models.User{ID: "user"}
+
+	firstStart := time.Date(2026, 5, 14, 9, 0, 0, 0, time.UTC)
+	firstEnd := firstStart.Add(10 * time.Minute)
+	secondStart := time.Date(2026, 5, 14, 9, 15, 0, 0, time.UTC)
+	secondEnd := secondStart.Add(5 * time.Minute)
+	otherDayStart := time.Date(2026, 5, 15, 9, 0, 0, 0, time.UTC)
+	otherDayEnd := otherDayStart.Add(3 * time.Minute)
+
+	_, err := sut.UpsertMany(user, []*CodexTaskSessionInput{
+		{
+			ExternalKey:     "codex:local:thread-1:turn-1",
+			Project:         "OnixServer",
+			StartedAt:       firstStart,
+			EndedAt:         &firstEnd,
+			SummaryHR:       "Implementirana je sinkronizacija Codex zadataka.",
+			DurationSeconds: 600,
+			TechnicalEvidenceJSON: EncodeCodexEvidence(map[string]any{
+				"events": []map[string]any{{"tool_name": "Bash", "command": "go test ./services"}},
+			}),
+		},
+		{
+			ExternalKey:     "codex:local:thread-1:turn-2",
+			Project:         "OnixServer",
+			StartedAt:       secondStart,
+			EndedAt:         &secondEnd,
+			SummaryHR:       "Provjereno stanje baze podataka.",
+			DurationSeconds: 300,
+		},
+		{
+			ExternalKey:     "codex:local:thread-1:turn-3",
+			Project:         "wakapi",
+			StartedAt:       secondStart,
+			EndedAt:         &secondEnd,
+			SummaryHR:       "Ažurirano services/codex_task_service.go.",
+			DurationSeconds: 300,
+		},
+		{
+			ExternalKey:     "codex:local:thread-1:turn-4",
+			Project:         "OnixServer",
+			StartedAt:       otherDayStart,
+			EndedAt:         &otherDayEnd,
+			SummaryHR:       "Ažurirano other-day.go.",
+			DurationSeconds: 180,
+		},
+		{
+			ExternalKey: "codex:local:thread-1:turn-open",
+			Project:     "OnixServer",
+			StartedAt:   secondStart.Add(30 * time.Minute),
+		},
+	})
+	require.NoError(t, err)
+
+	worklogs, err := sut.GetWorklogs(user, &dayStart, &dayEnd, "OnixServer")
+
+	require.NoError(t, err)
+	require.Len(t, worklogs, 1)
+	assert.Equal(t, "codex:chat:local:thread-1:20260514:OnixServer", worklogs[0].ExternalKey)
+	assert.Equal(t, firstStart, worklogs[0].StartedAt)
+	assert.Equal(t, secondEnd, worklogs[0].EndedAt)
+	assert.Equal(t, 900.0, worklogs[0].DurationSeconds)
+	assert.Equal(t, "Codex chat: Implementirana je sinkronizacija Codex zadataka; Provjereno stanje baze podataka.", worklogs[0].Summary)
+	assert.Contains(t, worklogs[0].TechnicalNote, "Grupirano 2 Codex turna iz istog chata.")
+	assert.Contains(t, worklogs[0].TechnicalNote, "codex:local:thread-1:turn-1")
+	assert.Contains(t, worklogs[0].TechnicalNote, "codex:local:thread-1:turn-2")
 }
