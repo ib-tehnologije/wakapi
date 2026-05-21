@@ -196,6 +196,29 @@ func TestCodexTaskService_UpsertManyUsesToolCategoryWhenCommandTextIsAbsent(t *t
 	assert.NotContains(t, created[0].SummaryHR, "Good")
 }
 
+func TestCodexTaskService_UpsertManyDoesNotClassifyGeneratedOnixPhoneWorkAsURA(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	started := time.Date(2026, 5, 14, 9, 0, 0, 0, time.UTC)
+	ended := started.Add(5 * time.Minute)
+	user := &models.User{ID: "user"}
+
+	created, err := sut.UpsertMany(user, []*CodexTaskSessionInput{{
+		ExternalKey:          "codex:local:thread-1:turn-1",
+		Project:              "OnixPhone",
+		StartedAt:            started,
+		EndedAt:              &ended,
+		Prompt:               "sredi DMS ispis za OnixPhone dokumente",
+		LastAssistantMessage: "Generiran DMS ispis dokumenata.",
+		Evidence:             []string{"Services/DmsPrintService.cs"},
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	assert.Equal(t, "Rad na OnixPhone DMS ispisu i obradi dokumenata.", created[0].SummaryHR)
+}
+
 func TestCodexTaskService_UpsertManySkipsEnglishAssistantTitleJSON(t *testing.T) {
 	repo := newInMemoryCodexTaskRepository()
 	sut := NewCodexTaskService(repo)

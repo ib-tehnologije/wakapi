@@ -339,6 +339,7 @@ func isLowValueCodexSummary(summary string) bool {
 func codexIntentSummary(project string, parts ...string) string {
 	context := strings.ToLower(strings.Join(parts, "\n"))
 	project = strings.TrimSpace(project)
+	projectLower := strings.ToLower(project)
 
 	if containsAnyCodexText(context, "kubectl", "kubernetes", "fleet", "deployment", "helm", "ghcr.io", "rollout") &&
 		!containsAnyCodexText(context, "codex_task", "codex task", "codex worklog", "codex-worklog") {
@@ -372,11 +373,10 @@ func codexIntentSummary(project string, parts ...string) string {
 		return "Rad na CLI provjerama i validaciji Delphi decompilera."
 	}
 
-	if containsAnyCodexText(context,
+	if projectLower == "ura" || containsAnyCodexText(context,
 		"/ura/",
 		"ura_",
 		"onxpo",
-		"ira",
 	) {
 		return "Rad na URA poslovnoj logici, testovima i migracijskim koracima."
 	}

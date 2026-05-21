@@ -462,6 +462,62 @@ test("Stop falls back to tool category evidence when command text is absent", as
   });
 });
 
+test("Stop does not classify generated OnixPhone work as URA", async () => {
+  await withWorklogHome(async (home) => {
+    const env = testEnv(home);
+    let current = now;
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/OnixPhone",
+        prompt: "sredi DMS ispis za OnixPhone dokumente",
+      },
+      env,
+      deps,
+    );
+
+    await handleHook(
+      {
+        hook_event_name: "PostToolUse",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/OnixPhone",
+        tool_name: "apply_patch",
+        tool_input: {
+          command: "*** Begin Patch\n*** Update File: Services/DmsPrintService.cs\n@@\n+test\n*** End Patch\n",
+        },
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:20:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "Stop",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/OnixPhone",
+        last_assistant_message: "Generiran DMS ispis dokumenata.",
+      },
+      env,
+      deps,
+    );
+
+    const queued = await readdir(path.join(home, "queue"));
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].summary_hr, "Rad na OnixPhone DMS ispisu i obradi dokumenata.");
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /URA/);
+  });
+});
+
 test("Stop skips English title from assistant JSON", async () => {
   await withWorklogHome(async (home) => {
     const env = testEnv(home);

@@ -290,6 +290,7 @@ function evidenceFallbackSummary(task) {
 
 function workIntentSummary(task, changedFiles = [], inspectedFiles = [], commands = []) {
   const project = String(task?.project || "").trim();
+  const projectLower = project.toLowerCase();
   const context = [
     project,
     task?.workspace_root,
@@ -336,11 +337,10 @@ function workIntentSummary(task, changedFiles = [], inspectedFiles = [], command
     return "Rad na CLI provjerama i validaciji Delphi decompilera.";
   }
 
-  if (containsAny(context, [
+  if (projectLower === "ura" || containsAny(context, [
     "/ura/",
     "ura_",
     "onxpo",
-    "ira",
   ])) {
     return "Rad na URA poslovnoj logici, testovima i migracijskim koracima.";
   }
