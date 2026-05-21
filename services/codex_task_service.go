@@ -76,7 +76,7 @@ var (
 	codexVagueSummaryPattern = regexp.MustCompile(`^(?:checked|patched|fixed|updated|changed|reviewed|worked on|handled|investigated|debugged|cleaned)(?:\s+(?:it|this|that))?[.!?]?$|^(?:checked and patched|checked and fixed|patched and checked|fixed and checked)\s+(?:it|this|that)[.!?]?$`)
 	codexPatchAppliedPattern = regexp.MustCompile(`^(?:patch applied successfully|corrective patch is applied(?: and verified)?)[.!?]?$`)
 	codexFillerSummaries     = map[string]bool{"yes": true, "yep": true, "ok": true, "okay": true, "done": true, "sure": true, "youreright": true, "youareright": true}
-	codexCroatianTokens      = []string{"č", "ć", "đ", "š", "ž", "ažuriran", "azuriran", "pregledan", "provjeren", "dodan", "dodana", "dodano", "dodane", "popravljen", "popravljena", "popravljeno", "uklonjen", "uklonjena", "obrisan", "obrisani", "istražen", "istrazen", "pokrenut", "generiran", "implementiran", "sinkronizacij", "sesija", "sažetak", "sazetak", "stanje", "baze", "podataka", "resursi", "repozitorij", "repozitorija", "migracij", "tijek", "skrivan", "commitan", "pushan"}
+	codexCroatianTokens      = []string{"č", "ć", "đ", "š", "ž", "rad", "ažuriran", "azuriran", "pregledan", "provjeren", "dodan", "dodana", "dodano", "dodane", "popravljen", "popravljena", "popravljeno", "uklonjen", "uklonjena", "obrisan", "obrisani", "istražen", "istrazen", "pokrenut", "generiran", "implementiran", "integracij", "validacij", "provjerama", "obradi", "deployu", "sinkronizacij", "sesija", "sažetak", "sazetak", "stanje", "baze", "podataka", "resursi", "repozitorij", "repozitorija", "migracij", "tijek", "skrivan", "commitan", "pushan"}
 )
 
 const codexNoEvidenceSummary = "Codex sesija bez zabilježenog konteksta."
@@ -230,6 +230,20 @@ func codexChatExternalKeyParts(externalKey string) (string, string) {
 
 func buildCodexGroupedSummary(project string, sessions []*models.CodexTaskSession) string {
 	summaries := distinctCodexSessionSummaries(sessions)
+	intentSummary := codexGroupedIntentSummary(project, sessions)
+	humanSummaries := make([]string, 0, len(summaries))
+	for _, summary := range summaries {
+		if isLowValueCodexSummary(summary) {
+			continue
+		}
+		humanSummaries = append(humanSummaries, summary)
+	}
+	if len(humanSummaries) > 0 {
+		return buildCodexSummaryList(humanSummaries)
+	}
+	if intentSummary != "" {
+		return intentSummary
+	}
 	if len(summaries) == 0 {
 		project = strings.TrimSpace(project)
 		if project == "" {
@@ -237,6 +251,11 @@ func buildCodexGroupedSummary(project string, sessions []*models.CodexTaskSessio
 		}
 		return normalizeCodexSummary(fmt.Sprintf("Codex chat na projektu %s bez zabilježenog konteksta.", project), 220)
 	}
+
+	return buildCodexSummaryList(summaries)
+}
+
+func buildCodexSummaryList(summaries []string) string {
 	if len(summaries) == 1 {
 		return summaries[0]
 	}
@@ -259,6 +278,149 @@ func buildCodexGroupedSummary(project string, sessions []*models.CodexTaskSessio
 		}
 	}
 	return normalizeCodexSummary("Codex chat: "+trimCodexSentence(summaries[0]), 220)
+}
+
+func codexGroupedIntentSummary(project string, sessions []*models.CodexTaskSession) string {
+	parts := []string{project}
+	hasSignal := false
+	for _, session := range sessions {
+		if hasCodexSessionEvidence(session) || isLowValueCodexSummary(session.SummaryHR) && session.SummaryHR != "" && session.SummaryHR != codexNoEvidenceSummary {
+			hasSignal = true
+		}
+		parts = append(parts,
+			session.Project,
+			session.WorkspaceRoot,
+			session.Repository,
+			session.Branch,
+			session.SummaryHR,
+			session.Prompt,
+			session.LastAssistantMessage,
+			session.TechnicalNote,
+			session.EvidenceJSON,
+		)
+	}
+	if !hasSignal {
+		return ""
+	}
+	return codexIntentSummary(project, parts...)
+}
+
+func isLowValueCodexSummary(summary string) bool {
+	summary = strings.TrimSpace(summary)
+	if summary == "" || summary == codexNoEvidenceSummary {
+		return true
+	}
+
+	lower := strings.ToLower(summary)
+	if strings.Contains(lower, "bez zabilježenog konteksta") || strings.Contains(lower, "bez zabiljezenog konteksta") {
+		return true
+	}
+	if strings.HasPrefix(lower, "codex chat:") {
+		rest := strings.TrimSpace(strings.TrimPrefix(lower, "codex chat:"))
+		parts := strings.Split(rest, ";")
+		lowValueParts := 0
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" || strings.HasPrefix(part, "još ") || strings.HasPrefix(part, "jos ") || isLowValueCodexSummary(part) {
+				lowValueParts++
+			}
+		}
+		return lowValueParts == len(parts)
+	}
+	if strings.HasPrefix(lower, "ažurirano ") || strings.HasPrefix(lower, "azurirano ") ||
+		strings.HasPrefix(lower, "pregledano ") || strings.HasPrefix(lower, "provjereno stanje ") ||
+		strings.HasPrefix(lower, "provjereni kubernetes ") || strings.HasPrefix(lower, "pokrenute projektne ") ||
+		strings.HasPrefix(lower, "provjereno stanje repozitorija") {
+		return true
+	}
+	return false
+}
+
+func codexIntentSummary(project string, parts ...string) string {
+	context := strings.ToLower(strings.Join(parts, "\n"))
+	project = strings.TrimSpace(project)
+
+	if containsAnyCodexText(context, "kubectl", "kubernetes", "fleet", "deployment", "helm", "ghcr.io", "rollout") &&
+		!containsAnyCodexText(context, "codex_task", "codex task", "codex worklog", "codex-worklog") {
+		return fmt.Sprintf("Rad na deployu i Kubernetes konfiguraciji projekta %s.", codexProjectLabel(project))
+	}
+
+	if containsAnyCodexText(context,
+		"sqlcmd",
+		"execute_sql",
+		"mcp__mssql",
+		"db_query",
+		"database_query",
+		"company_db_query",
+		"select ",
+	) {
+		return fmt.Sprintf("Analiza podataka u bazi za projekt %s.", codexProjectLabel(project))
+	}
+
+	if containsAnyCodexText(context, "codex worklog", "codex-worklog", "codex_task", "codex task", "wakatime") ||
+		strings.Contains(context, "wakapi") && containsAnyCodexText(context, "worklog", "wakatime", "codex_task", "codex task") {
+		return "Rad na Codex worklog integraciji u Wakapiju."
+	}
+
+	if containsAnyCodexText(context,
+		"delphi-decompiler",
+		"delphi decompiler",
+		"cli/check.sh",
+		"decompiler",
+		" idr",
+	) {
+		return "Rad na CLI provjerama i validaciji Delphi decompilera."
+	}
+
+	if containsAnyCodexText(context,
+		"/ura/",
+		"ura_",
+		"onxpo",
+		"ira",
+	) {
+		return "Rad na URA poslovnoj logici, testovima i migracijskim koracima."
+	}
+
+	if containsAnyCodexText(context,
+		"onixphone",
+		"document_batch",
+		"pdf_batch",
+		"batch_print",
+		"dms ispis",
+	) {
+		return "Rad na OnixPhone DMS ispisu i obradi dokumenata."
+	}
+
+	if containsAnyCodexText(context,
+		"test_",
+		"_test.",
+		"npm test",
+		"yarn test",
+		"go test",
+		"dotnet test",
+		"pytest",
+	) {
+		return fmt.Sprintf("Rad na testovima i provjerama projekta %s.", codexProjectLabel(project))
+	}
+
+	return ""
+}
+
+func containsAnyCodexText(value string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(value, strings.ToLower(needle)) {
+			return true
+		}
+	}
+	return false
+}
+
+func codexProjectLabel(project string) string {
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return "projekt"
+	}
+	return project
 }
 
 func distinctCodexSessionSummaries(sessions []*models.CodexTaskSession) []string {
@@ -493,6 +655,24 @@ func codexEvidenceSummary(input *CodexTaskSessionInput) string {
 			continue
 		}
 		addCodexEvidenceFiles(&inspectedFiles, extractCodexCommandFiles(command))
+	}
+
+	if len(changedFiles) > 0 || len(inspectedFiles) > 0 || len(commands) > 0 {
+		if summary := codexIntentSummary(input.Project,
+			input.Project,
+			input.WorkspaceRoot,
+			input.Repository,
+			input.Branch,
+			input.Prompt,
+			input.LastAssistantMessage,
+			strings.Join(input.Evidence, "\n"),
+			strings.Join(changedFiles, "\n"),
+			strings.Join(inspectedFiles, "\n"),
+			strings.Join(commands, "\n"),
+			input.TechnicalEvidenceJSON,
+		); summary != "" {
+			return summary
+		}
 	}
 
 	if len(changedFiles) > 0 {
@@ -754,6 +934,9 @@ func isUsefulCodexWorkSummary(value string) bool {
 		return false
 	}
 	if codexPatchAppliedPattern.MatchString(lower) {
+		return false
+	}
+	if isLowValueCodexSummary(summary) {
 		return false
 	}
 	return true

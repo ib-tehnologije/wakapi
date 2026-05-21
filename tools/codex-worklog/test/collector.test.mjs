@@ -213,9 +213,70 @@ test("Stop falls back to changed file evidence instead of vague generated text",
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Ažurirano routes/api/codex_tasks.go.");
+    assert.equal(payload.sessions[0].summary_hr, "Rad na Codex worklog integraciji u Wakapiju.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /checked and patched it/i);
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
+  });
+});
+
+test("Stop falls back to work intent instead of changed file breadcrumb", async () => {
+  await withWorklogHome(async (home) => {
+    const env = {
+      ...testEnv(home),
+      CODEX_WORKLOG_SUMMARY_ENABLED: "1",
+    };
+    let current = now;
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+      summarizeTask: async () => "Ažurirano routes/api/codex_tasks.go.",
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        prompt: "make Wakapi Codex worklog messages smarter",
+      },
+      env,
+      deps,
+    );
+
+    await handleHook(
+      {
+        hook_event_name: "PostToolUse",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        tool_name: "apply_patch",
+        tool_input: {
+          command: "*** Begin Patch\n*** Update File: routes/api/codex_tasks.go\n@@\n+test\n*** End Patch\n",
+        },
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:20:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "Stop",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        cwd: "/Users/igbenic/Projects/wakapi",
+        last_assistant_message: "Added grouped Codex worklog summary logic in Wakapi.",
+      },
+      env,
+      deps,
+    );
+
+    const queued = await readdir(path.join(home, "queue"));
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].summary_hr, "Rad na Codex worklog integraciji u Wakapiju.");
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /Ažurirano/);
+    assert.doesNotMatch(payload.sessions[0].summary_hr, /routes\/api\/codex_tasks\.go/);
   });
 });
 
@@ -285,7 +346,7 @@ test("Stop falls back to inspected file evidence instead of assistant reply text
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Pregledano 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-configmap.yaml i 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-service.yaml.");
+    assert.equal(payload.sessions[0].summary_hr, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /you use it as/i);
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
   });
@@ -342,7 +403,7 @@ test("Stop falls back to command category evidence when no files are captured", 
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Provjereni Kubernetes resursi.");
+    assert.equal(payload.sessions[0].summary_hr, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /rad s codexom|patch applied/i);
   });
 });
@@ -396,7 +457,7 @@ test("Stop falls back to tool category evidence when command text is absent", as
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Provjereno stanje baze podataka.");
+    assert.equal(payload.sessions[0].summary_hr, "Analiza podataka u bazi za projekt URA.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /rad s codexom|good/i);
   });
 });

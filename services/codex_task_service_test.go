@@ -69,7 +69,7 @@ func TestCodexTaskService_UpsertManyBuildsFallbackSummaryAndDuration(t *testing.
 	require.Len(t, created, 1)
 	assert.Equal(t, 750.0, created[0].DurationSeconds)
 	assert.Equal(t, models.CodexTaskSessionStatusClosed, created[0].Status)
-	assert.Equal(t, "Ažurirano routes/api/codex_tasks.go.", created[0].SummaryHR)
+	assert.Equal(t, "Rad na Codex worklog integraciji u Wakapiju.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "please implement codex task worklogs")
 	assert.Contains(t, created[0].TechnicalNote, "routes/api/codex_tasks.go")
 	assert.Equal(t, `{"tool_count":4}`, created[0].EvidenceJSON)
@@ -95,7 +95,7 @@ func TestCodexTaskService_UpsertManyPrefersEvidenceOverVagueProvidedSummary(t *t
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Ažurirano routes/api/codex_tasks.go.", created[0].SummaryHR)
+	assert.Equal(t, "Rad na Codex worklog integraciji u Wakapiju.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "Checked and patched it")
 }
 
@@ -131,7 +131,7 @@ func TestCodexTaskService_UpsertManyPrefersEvidenceOverAssistantReply(t *testing
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Pregledano 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-configmap.yaml i 02-fleet/05-apps/zerotier-client-gateway/zerotier-client-gateway-service.yaml.", created[0].SummaryHR)
+	assert.Equal(t, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "You use it as")
 }
 
@@ -162,7 +162,7 @@ func TestCodexTaskService_UpsertManyUsesCommandCategoryWhenNoFilesWereCaptured(t
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Provjereni Kubernetes resursi.", created[0].SummaryHR)
+	assert.Equal(t, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "Patch applied")
 }
 
@@ -192,7 +192,7 @@ func TestCodexTaskService_UpsertManyUsesToolCategoryWhenCommandTextIsAbsent(t *t
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Provjereno stanje baze podataka.", created[0].SummaryHR)
+	assert.Equal(t, "Analiza podataka u bazi za projekt URA.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "Good")
 }
 
@@ -410,7 +410,7 @@ func TestCodexTaskService_GetWorklogsGroupsClosedTurnsByChatProjectAndDay(t *tes
 	assert.Equal(t, firstStart, worklogs[0].StartedAt)
 	assert.Equal(t, secondEnd, worklogs[0].EndedAt)
 	assert.Equal(t, 900.0, worklogs[0].DurationSeconds)
-	assert.Equal(t, "Codex chat: Implementirana je sinkronizacija Codex zadataka; Provjereno stanje baze podataka.", worklogs[0].Summary)
+	assert.Equal(t, "Implementirana je sinkronizacija Codex zadataka.", worklogs[0].Summary)
 	assert.Contains(t, worklogs[0].TechnicalNote, "Grupirano 2 Codex turna iz istog chata.")
 	assert.Contains(t, worklogs[0].TechnicalNote, "codex:local:thread-1:turn-1")
 	assert.Contains(t, worklogs[0].TechnicalNote, "codex:local:thread-1:turn-2")
@@ -484,4 +484,66 @@ func TestCodexTaskService_GetWorklogsKeepsTinyTurnsWithEvidence(t *testing.T) {
 	require.Len(t, worklogs, 1)
 	assert.Equal(t, "codex:chat:local:thread-short:20260514:URA", worklogs[0].ExternalKey)
 	assert.Equal(t, 5.0, worklogs[0].DurationSeconds)
+}
+
+func TestCodexTaskService_GetWorklogsBuildsIntentSummaryInsteadOfFileBreadcrumbs(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	started := time.Date(2026, 5, 21, 0, 1, 0, 0, time.UTC)
+	ended := started.Add(45 * time.Minute)
+	user := &models.User{ID: "user"}
+
+	_, err := sut.UpsertMany(user, []*CodexTaskSessionInput{{
+		ExternalKey:          "codex:local:thread-delphi:turn-1",
+		Project:              "Delphi-decompiler-IDR",
+		WorkspaceRoot:        "/Users/igbenic/Projects/Delphi-decompiler-IDR",
+		StartedAt:            started,
+		EndedAt:              &ended,
+		DurationSeconds:      2700,
+		SummaryHR:            "Ažurirano cli/check.sh.",
+		Prompt:               "make the Delphi decompiler CLI check script more useful",
+		LastAssistantMessage: "Updated cli/check.sh and reran the decompiler sample validation.",
+		Evidence:             []string{"cli/check.sh"},
+	}})
+	require.NoError(t, err)
+
+	worklogs, err := sut.GetWorklogs(user, &started, &ended, "Delphi-decompiler-IDR")
+
+	require.NoError(t, err)
+	require.Len(t, worklogs, 1)
+	assert.Equal(t, "Rad na CLI provjerama i validaciji Delphi decompilera.", worklogs[0].Summary)
+	assert.NotContains(t, worklogs[0].Summary, "Ažurirano")
+	assert.NotContains(t, worklogs[0].Summary, "cli/check.sh")
+}
+
+func TestCodexTaskService_GetWorklogsBuildsWakapiIntentFromTouchedRepo(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	started := time.Date(2026, 5, 21, 9, 0, 0, 0, time.UTC)
+	ended := started.Add(30 * time.Minute)
+	user := &models.User{ID: "user"}
+
+	_, err := sut.UpsertMany(user, []*CodexTaskSessionInput{{
+		ExternalKey:          "codex:local:thread-wakapi:turn-1",
+		Project:              "OnixServer",
+		WorkspaceRoot:        "/Users/igbenic/Projects/OnixServer",
+		StartedAt:            started,
+		EndedAt:              &ended,
+		DurationSeconds:      1800,
+		SummaryHR:            "Ažurirano /Users/igbenic/Projects/wakapi/services/codex_task_service.go.",
+		Prompt:               "make Wakapi Codex worklog messages smarter",
+		LastAssistantMessage: "Added grouped Codex worklog summary logic in Wakapi.",
+		Evidence:             []string{"/Users/igbenic/Projects/wakapi/services/codex_task_service.go"},
+	}})
+	require.NoError(t, err)
+
+	worklogs, err := sut.GetWorklogs(user, &started, &ended, "OnixServer")
+
+	require.NoError(t, err)
+	require.Len(t, worklogs, 1)
+	assert.Equal(t, "Rad na Codex worklog integraciji u Wakapiju.", worklogs[0].Summary)
+	assert.NotContains(t, worklogs[0].Summary, "Ažurirano")
+	assert.NotContains(t, worklogs[0].Summary, "codex_task_service.go")
 }

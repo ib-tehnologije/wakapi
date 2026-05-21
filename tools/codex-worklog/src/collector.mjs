@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile);
 const fallbackSummaryMaxChars = 180;
 const fillerSummaries = new Set(["yes", "yep", "ok", "okay", "done", "sure", "youreright", "youareright"]);
 const evidenceFilePattern = /(?:^|[\s"'=:(])((?:\.{1,2}\/)?[A-Za-z0-9._@~+-][A-Za-z0-9._@~+/-]*\.(?:cs|go|mjs|cjs|js|jsx|ts|tsx|json|ya?ml|toml|sql|pas|dfm|dart|md|sh|bash|zsh|ps1|csproj|sln|props|targets|graphql|proto|rs|py|rb|php|java|kt|swift|css|scss|html|xml|txt|ini|conf|env|service))(?:[:#]\d+)?(?=$|[\s"'`,);])/gi;
-const croatianSummaryPattern = /[čćđšž]|(?:^|[^\p{L}\p{N}])(?:ažuriran|azuriran|pregledan|provjeren|dodan|dodana|dodano|dodane|popravljen|popravljena|popravljeno|uklonjen|uklonjena|obrisan|obrisani|istražen|istrazen|pokrenut|generiran|implementiran|sinkronizacij|sesija|sažetak|sazetak|stanje|baze|podataka|resursi|repozitorij|repozitorija|migracij|tijek|skrivan|commitan|pushan)(?=$|[^\p{L}\p{N}])/iu;
+const croatianSummaryPattern = /[čćđšž]|(?:^|[^\p{L}\p{N}])(?:rad|ažuriran|azuriran|pregledan|provjeren|dodan|dodana|dodano|dodane|popravljen|popravljena|popravljeno|uklonjen|uklonjena|obrisan|obrisani|istražen|istrazen|pokrenut|generiran|implementiran|integracij|validacij|provjerama|obradi|deployu|sinkronizacij|sesija|sažetak|sazetak|stanje|baze|podataka|resursi|repozitorij|repozitorija|migracij|tijek|skrivan|commitan|pushan)(?=$|[^\p{L}\p{N}])/iu;
 
 export async function handleHook(payload, env = process.env, deps = {}) {
   const now = deps.now ?? (() => new Date());
@@ -269,6 +269,13 @@ function evidenceFallbackSummary(task) {
     addUnique(inspectedFiles, extractFilesFromCommand(command));
   }
 
+  if (changedFiles.length > 0 || inspectedFiles.length > 0 || commands.length > 0) {
+    const intentSummary = workIntentSummary(task, changedFiles, inspectedFiles, commands);
+    if (intentSummary) {
+      return intentSummary;
+    }
+  }
+
   if (changedFiles.length > 0) {
     return fileSummary("Ažurirano", changedFiles.slice(0, 1), fallbackSummaryMaxChars);
   }
@@ -279,6 +286,96 @@ function evidenceFallbackSummary(task) {
     return commandCategorySummary(commands);
   }
   return "";
+}
+
+function workIntentSummary(task, changedFiles = [], inspectedFiles = [], commands = []) {
+  const project = String(task?.project || "").trim();
+  const context = [
+    project,
+    task?.workspace_root,
+    task?.repository,
+    task?.branch,
+    task?.prompt,
+    task?.last_assistant_message,
+    ...(task?.evidence || []),
+    ...(task?.events || []).map((event) => `${event?.tool_name || ""} ${event?.command || ""}`),
+    ...changedFiles,
+    ...inspectedFiles,
+    ...commands,
+  ].join("\n").toLowerCase();
+
+  if (containsAny(context, ["kubectl", "kubernetes", "fleet", "deployment", "helm", "ghcr.io", "rollout"]) &&
+    !containsAny(context, ["codex_task", "codex task", "codex worklog", "codex-worklog"])) {
+    return `Rad na deployu i Kubernetes konfiguraciji projekta ${projectLabel(project)}.`;
+  }
+
+  if (containsAny(context, [
+    "sqlcmd",
+    "execute_sql",
+    "mcp__mssql",
+    "db_query",
+    "database_query",
+    "company_db_query",
+    "select ",
+  ])) {
+    return `Analiza podataka u bazi za projekt ${projectLabel(project)}.`;
+  }
+
+  if (containsAny(context, ["codex worklog", "codex-worklog", "codex_task", "codex task", "wakatime"]) ||
+    (context.includes("wakapi") && containsAny(context, ["worklog", "wakatime", "codex_task", "codex task"]))) {
+    return "Rad na Codex worklog integraciji u Wakapiju.";
+  }
+
+  if (containsAny(context, [
+    "delphi-decompiler",
+    "delphi decompiler",
+    "cli/check.sh",
+    "decompiler",
+    " idr",
+  ])) {
+    return "Rad na CLI provjerama i validaciji Delphi decompilera.";
+  }
+
+  if (containsAny(context, [
+    "/ura/",
+    "ura_",
+    "onxpo",
+    "ira",
+  ])) {
+    return "Rad na URA poslovnoj logici, testovima i migracijskim koracima.";
+  }
+
+  if (containsAny(context, [
+    "onixphone",
+    "document_batch",
+    "pdf_batch",
+    "batch_print",
+    "dms ispis",
+  ])) {
+    return "Rad na OnixPhone DMS ispisu i obradi dokumenata.";
+  }
+
+  if (containsAny(context, [
+    "test_",
+    "_test.",
+    "npm test",
+    "yarn test",
+    "go test",
+    "dotnet test",
+    "pytest",
+  ])) {
+    return `Rad na testovima i provjerama projekta ${projectLabel(project)}.`;
+  }
+
+  return "";
+}
+
+function containsAny(value, needles) {
+  return needles.some((needle) => value.includes(String(needle).toLowerCase()));
+}
+
+function projectLabel(project) {
+  return String(project || "").trim() || "projekt";
 }
 
 function commandCategorySummary(commands) {
@@ -436,8 +533,25 @@ function isUsefulWorkSummary(value) {
   if (/^(?:patch applied successfully|corrective patch is applied(?: and verified)?)[.!?]?$/.test(lower)) {
     return false;
   }
+  if (isLowValueWorkSummary(summary)) {
+    return false;
+  }
 
   return true;
+}
+
+function isLowValueWorkSummary(value) {
+  const lower = String(value || "").trim().toLowerCase();
+  if (!lower || lower.includes("bez zabilježenog konteksta") || lower.includes("bez zabiljezenog konteksta")) {
+    return true;
+  }
+  return lower.startsWith("ažurirano ") ||
+    lower.startsWith("azurirano ") ||
+    lower.startsWith("pregledano ") ||
+    lower.startsWith("provjereno stanje ") ||
+    lower.startsWith("provjereni kubernetes ") ||
+    lower.startsWith("pokrenute projektne ") ||
+    lower.startsWith("provjereno stanje repozitorija");
 }
 
 async function addHumanSummary(task, env, deps = {}) {
@@ -515,7 +629,10 @@ function summaryPrompt(task) {
   return [
     "Write one concise human worklog summary for Wakapi in Croatian only.",
     "Return only the summary text. No markdown, no bullets, no quotes.",
-    "Keep it under 180 characters. Mention concrete work, not internal tool mechanics.",
+    "Keep it under 180 characters. Describe the purpose and outcome of the work.",
+    "Do not summarize as a file list. Do not start with Ažurirano, Pregledano, or Provjereno.",
+    "Avoid raw file paths unless the file is the actual user-facing artifact.",
+    "Good style: Rad na Codex worklog integraciji u Wakapiju: grupiranje po chatu i bolji sažeci.",
     "",
     `Project: ${task.project || "unknown"}`,
     `Prompt: ${task.prompt || ""}`.slice(0, 1200),
