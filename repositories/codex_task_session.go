@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/muety/wakapi/models"
@@ -50,6 +51,46 @@ func (r *CodexTaskSessionRepository) GetByUserWithin(userID string, from, to *ti
 	}
 	if project != "" {
 		q = q.Where("project = ?", project)
+	}
+
+	if err := q.Find(&sessions).Error; err != nil {
+		return nil, err
+	}
+	return sessions, nil
+}
+
+func (r *CodexTaskSessionRepository) GetByUserExternalKey(userID string, externalKey string) (*models.CodexTaskSession, error) {
+	var session models.CodexTaskSession
+	if err := r.db.
+		Model(&models.CodexTaskSession{}).
+		Where("user_id = ? AND external_key = ?", userID, strings.TrimSpace(externalKey)).
+		First(&session).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &session, nil
+}
+
+func (r *CodexTaskSessionRepository) ListByUserForReview(userID string, from, to *time.Time, project string, limit int) ([]*models.CodexTaskSession, error) {
+	var sessions []*models.CodexTaskSession
+	q := r.db.
+		Model(&models.CodexTaskSession{}).
+		Where("user_id = ?", userID).
+		Order("started_at DESC")
+
+	if from != nil {
+		q = q.Where("started_at >= ?", from.Local())
+	}
+	if to != nil {
+		q = q.Where("started_at <= ?", to.Local())
+	}
+	if strings.TrimSpace(project) != "" {
+		q = q.Where("project = ?", strings.TrimSpace(project))
+	}
+	if limit > 0 {
+		q = q.Limit(limit)
 	}
 
 	if err := q.Find(&sessions).Error; err != nil {

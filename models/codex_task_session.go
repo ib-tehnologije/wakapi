@@ -22,6 +22,13 @@ type CodexTaskSession struct {
 	DurationSeconds      float64     `gorm:"not null; default:0" json:"duration_seconds"`
 	Status               string      `gorm:"not null; size:32; index" json:"status"`
 	SummaryHR            string      `gorm:"type:text" json:"summary_hr"`
+	SummaryHROriginal    string      `gorm:"type:text" json:"summary_hr_original"`
+	SummaryHRNormalized  string      `gorm:"type:text" json:"summary_hr_normalized"`
+	SummarySource        string      `gorm:"size:32" json:"summary_source"`
+	SummaryConfidence    float64     `gorm:"not null; default:0" json:"summary_confidence"`
+	ClientMessageHR      string      `gorm:"type:text" json:"client_message_hr"`
+	InternalMessageHR    string      `gorm:"type:text" json:"internal_message_hr"`
+	ReviewStatus         string      `gorm:"size:32; index" json:"review_status"`
 	Prompt               string      `gorm:"type:text" json:"prompt"`
 	LastAssistantMessage string      `gorm:"type:text" json:"last_assistant_message"`
 	EvidenceJSON         string      `gorm:"type:text" json:"evidence_json"`

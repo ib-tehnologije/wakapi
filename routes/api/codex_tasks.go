@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,8 @@ func (h *CodexTaskApiHandler) RegisterRoutes(router chi.Router) {
 		r.Use(middlewares.NewAuthenticateMiddleware(h.userSrvc).WithFullAccessOnly(true).Handler)
 		r.Post("/integrations/codex/task-sessions", h.PostTaskSessions)
 		r.Post("/integrations/codex/task-sessions.bulk", h.PostTaskSessions)
+		r.Get("/integrations/codex/review-queue", h.GetReviewQueue)
+		r.Patch("/integrations/codex/review-queue/{external_key}", h.PatchReviewQueue)
 	})
 
 	router.Group(func(r chi.Router) {
@@ -50,6 +53,13 @@ type codexTaskSessionRequest struct {
 	DurationSeconds      float64         `json:"duration_seconds"`
 	Status               string          `json:"status"`
 	SummaryHR            string          `json:"summary_hr"`
+	SummaryHROriginal    string          `json:"summary_hr_original"`
+	SummaryHRNormalized  string          `json:"summary_hr_normalized"`
+	SummarySource        string          `json:"summary_source"`
+	SummaryConfidence    float64         `json:"summary_confidence"`
+	ClientMessageHR      string          `json:"client_message_hr"`
+	InternalMessageHR    string          `json:"internal_message_hr"`
+	ReviewStatus         string          `json:"review_status"`
 	Prompt               string          `json:"prompt"`
 	LastAssistantMessage string          `json:"last_assistant_message"`
 	Evidence             []string        `json:"evidence"`
@@ -61,20 +71,33 @@ type codexTaskSessionsRequest struct {
 	Sessions []*codexTaskSessionRequest `json:"sessions"`
 }
 
+type codexTaskReviewRequest struct {
+	Action            string `json:"action"`
+	ClientMessageHR   string `json:"client_message_hr"`
+	InternalMessageHR string `json:"internal_message_hr"`
+}
+
 type codexTaskSessionResponse struct {
-	ID              string     `json:"id"`
-	ExternalKey     string     `json:"external_key"`
-	Project         string     `json:"project"`
-	Source          string     `json:"source"`
-	StartedAt       time.Time  `json:"started_at"`
-	EndedAt         *time.Time `json:"ended_at"`
-	DurationSeconds float64    `json:"duration_seconds"`
-	Status          string     `json:"status"`
-	Summary         string     `json:"summary"`
-	TechnicalNote   string     `json:"technical_note,omitempty"`
-	WorkspaceRoot   string     `json:"workspace_root,omitempty"`
-	Repository      string     `json:"repository,omitempty"`
-	Branch          string     `json:"branch,omitempty"`
+	ID                  string     `json:"id"`
+	ExternalKey         string     `json:"external_key"`
+	Project             string     `json:"project"`
+	Source              string     `json:"source"`
+	StartedAt           time.Time  `json:"started_at"`
+	EndedAt             *time.Time `json:"ended_at"`
+	DurationSeconds     float64    `json:"duration_seconds"`
+	Status              string     `json:"status"`
+	Summary             string     `json:"summary"`
+	SummaryHROriginal   string     `json:"summary_hr_original,omitempty"`
+	SummaryHRNormalized string     `json:"summary_hr_normalized,omitempty"`
+	SummarySource       string     `json:"summary_source,omitempty"`
+	SummaryConfidence   float64    `json:"summary_confidence,omitempty"`
+	ClientMessageHR     string     `json:"client_message_hr,omitempty"`
+	InternalMessageHR   string     `json:"internal_message_hr,omitempty"`
+	ReviewStatus        string     `json:"review_status,omitempty"`
+	TechnicalNote       string     `json:"technical_note,omitempty"`
+	WorkspaceRoot       string     `json:"workspace_root,omitempty"`
+	Repository          string     `json:"repository,omitempty"`
+	Branch              string     `json:"branch,omitempty"`
 }
 
 type codexTaskSessionsResponse struct {
@@ -144,6 +167,90 @@ func (h *CodexTaskApiHandler) GetOnixWorklogs(w http.ResponseWriter, r *http.Req
 	helpers.RespondJSON(w, r, http.StatusOK, &codexTaskWorklogsResponse{Data: codexWorklogsToResponse(worklogs)})
 }
 
+func (h *CodexTaskApiHandler) GetReviewQueue(w http.ResponseWriter, r *http.Request) {
+	user, err := routeutils.CheckEffectiveUser(w, r, h.userSrvc, "current")
+	if err != nil {
+		return
+	}
+
+	q := r.URL.Query()
+	from, to, err := parseCodexWorklogDateRange(q.Get("start"), q.Get("end"), user.TZ())
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
+		return
+	}
+
+	limit := 50
+	if rawLimit := strings.TrimSpace(q.Get("limit")); rawLimit != "" {
+		parsedLimit, parseErr := strconv.Atoi(rawLimit)
+		if parseErr != nil || parsedLimit <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("invalid limit"))
+			return
+		}
+		limit = parsedLimit
+	}
+
+	queue, err := h.codexTaskSrvc.ListReviewQueue(
+		user,
+		from,
+		to,
+		strings.TrimSpace(q.Get("project")),
+		strings.TrimSpace(q.Get("status")),
+		limit,
+	)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
+		return
+	}
+
+	helpers.RespondJSON(w, r, http.StatusOK, &codexTaskSessionsResponse{Data: codexTaskSessionsToResponse(queue)})
+}
+
+func (h *CodexTaskApiHandler) PatchReviewQueue(w http.ResponseWriter, r *http.Request) {
+	user, err := routeutils.CheckEffectiveUser(w, r, h.userSrvc, "current")
+	if err != nil {
+		return
+	}
+
+	externalKey := strings.TrimSpace(chi.URLParam(r, "external_key"))
+	if externalKey == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("external_key is required"))
+		return
+	}
+
+	var payload codexTaskReviewRequest
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("invalid request body"))
+		return
+	}
+
+	session, err := h.codexTaskSrvc.ReviewSession(user, &services.CodexTaskReviewInput{
+		ExternalKey:       externalKey,
+		Action:            payload.Action,
+		ClientMessageHR:   payload.ClientMessageHR,
+		InternalMessageHR: payload.InternalMessageHR,
+	})
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
+		return
+	}
+
+	responseRows := codexTaskSessionsToResponse([]*models.CodexTaskSession{session})
+	if len(responseRows) == 0 {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(conf.ErrInternalServerError))
+		return
+	}
+
+	helpers.RespondJSON(w, r, http.StatusOK, responseRows[0])
+}
+
 func decodeCodexTaskSessions(r *http.Request) ([]*codexTaskSessionRequest, error) {
 	var wrapper codexTaskSessionsRequest
 	if err := json.NewDecoder(r.Body).Decode(&wrapper); err != nil {
@@ -171,6 +278,13 @@ func (s *codexTaskSessionRequest) toServiceInput() *services.CodexTaskSessionInp
 		DurationSeconds:       s.DurationSeconds,
 		Status:                s.Status,
 		SummaryHR:             s.SummaryHR,
+		SummaryHROriginal:     s.SummaryHROriginal,
+		SummaryHRNormalized:   s.SummaryHRNormalized,
+		SummarySource:         s.SummarySource,
+		SummaryConfidence:     s.SummaryConfidence,
+		ClientMessageHR:       s.ClientMessageHR,
+		InternalMessageHR:     s.InternalMessageHR,
+		ReviewStatus:          s.ReviewStatus,
 		Prompt:                s.Prompt,
 		LastAssistantMessage:  s.LastAssistantMessage,
 		Evidence:              s.Evidence,
@@ -187,19 +301,26 @@ func codexTaskSessionsToResponse(sessions []*models.CodexTaskSession) []*codexTa
 			endedAt = &t
 		}
 		result = append(result, &codexTaskSessionResponse{
-			ID:              session.ID,
-			ExternalKey:     session.ExternalKey,
-			Project:         session.Project,
-			Source:          models.CodexTaskWorklogSource,
-			StartedAt:       session.StartedAt.T(),
-			EndedAt:         endedAt,
-			DurationSeconds: session.DurationSeconds,
-			Status:          session.Status,
-			Summary:         session.SummaryHR,
-			TechnicalNote:   session.TechnicalNote,
-			WorkspaceRoot:   session.WorkspaceRoot,
-			Repository:      session.Repository,
-			Branch:          session.Branch,
+			ID:                  session.ID,
+			ExternalKey:         session.ExternalKey,
+			Project:             session.Project,
+			Source:              models.CodexTaskWorklogSource,
+			StartedAt:           session.StartedAt.T(),
+			EndedAt:             endedAt,
+			DurationSeconds:     session.DurationSeconds,
+			Status:              session.Status,
+			Summary:             session.SummaryHR,
+			SummaryHROriginal:   session.SummaryHROriginal,
+			SummaryHRNormalized: session.SummaryHRNormalized,
+			SummarySource:       session.SummarySource,
+			SummaryConfidence:   session.SummaryConfidence,
+			ClientMessageHR:     session.ClientMessageHR,
+			InternalMessageHR:   session.InternalMessageHR,
+			ReviewStatus:        session.ReviewStatus,
+			TechnicalNote:       session.TechnicalNote,
+			WorkspaceRoot:       session.WorkspaceRoot,
+			Repository:          session.Repository,
+			Branch:              session.Branch,
 		})
 	}
 	return result
@@ -210,19 +331,26 @@ func codexWorklogsToResponse(worklogs []*services.CodexTaskWorklog) []*codexTask
 	for _, worklog := range worklogs {
 		endedAt := worklog.EndedAt
 		result = append(result, &codexTaskSessionResponse{
-			ID:              worklog.ID,
-			ExternalKey:     worklog.ExternalKey,
-			Project:         worklog.Project,
-			Source:          worklog.Source,
-			StartedAt:       worklog.StartedAt,
-			EndedAt:         &endedAt,
-			DurationSeconds: worklog.DurationSeconds,
-			Status:          worklog.Status,
-			Summary:         worklog.Summary,
-			TechnicalNote:   worklog.TechnicalNote,
-			WorkspaceRoot:   worklog.WorkspaceRoot,
-			Repository:      worklog.Repository,
-			Branch:          worklog.Branch,
+			ID:                  worklog.ID,
+			ExternalKey:         worklog.ExternalKey,
+			Project:             worklog.Project,
+			Source:              worklog.Source,
+			StartedAt:           worklog.StartedAt,
+			EndedAt:             &endedAt,
+			DurationSeconds:     worklog.DurationSeconds,
+			Status:              worklog.Status,
+			Summary:             worklog.Summary,
+			SummaryHROriginal:   worklog.SummaryHROriginal,
+			SummaryHRNormalized: worklog.SummaryHRNormalized,
+			SummarySource:       worklog.SummarySource,
+			SummaryConfidence:   worklog.SummaryConfidence,
+			ClientMessageHR:     worklog.ClientMessageHR,
+			InternalMessageHR:   worklog.InternalMessageHR,
+			ReviewStatus:        worklog.ReviewStatus,
+			TechnicalNote:       worklog.TechnicalNote,
+			WorkspaceRoot:       worklog.WorkspaceRoot,
+			Repository:          worklog.Repository,
+			Branch:              worklog.Branch,
 		})
 	}
 	return result

@@ -8,9 +8,24 @@ import {promisify} from "node:util";
 
 const execFileAsync = promisify(execFile);
 const fallbackSummaryMaxChars = 180;
+const gitEvidenceTimeoutMs = 2000;
+const gitEvidenceMaxBytes = 128 * 1024;
+const sensitiveGitPathPattern = /(?:^|\/)(?:\.env(?:\..*)?|.*\.(?:pem|p12|pfx|key)|id_rsa|id_dsa|credentials|secrets?)(?:$|\/)/i;
 const fillerSummaries = new Set(["yes", "yep", "ok", "okay", "done", "sure", "youreright", "youareright"]);
 const evidenceFilePattern = /(?:^|[\s"'=:(])((?:\.{1,2}\/)?[A-Za-z0-9._@~+-][A-Za-z0-9._@~+/-]*\.(?:cs|go|mjs|cjs|js|jsx|ts|tsx|json|ya?ml|toml|sql|pas|dfm|dart|md|sh|bash|zsh|ps1|csproj|sln|props|targets|graphql|proto|rs|py|rb|php|java|kt|swift|css|scss|html|xml|txt|ini|conf|env|service))(?:[:#]\d+)?(?=$|[\s"'`,);])/gi;
 const croatianSummaryPattern = /[čćđšž]|(?:^|[^\p{L}\p{N}])(?:rad|ažuriran|azuriran|pregledan|provjeren|dodan|dodana|dodano|dodane|popravljen|popravljena|popravljeno|uklonjen|uklonjena|obrisan|obrisani|istražen|istrazen|pokrenut|generiran|implementiran|integracij|validacij|provjerama|obradi|deployu|sinkronizacij|sesija|sažetak|sazetak|stanje|baze|podataka|resursi|repozitorij|repozitorija|migracij|tijek|skrivan|commitan|pushan)(?=$|[^\p{L}\p{N}])/iu;
+const genericClientSummaryPatterns = [
+  /\bvrijeme bez commitova?\b/i,
+  /\bvrijeme bez commita\b/i,
+  /\brad na projektu\b/i,
+  /\banaliza podataka u bazi\b/i,
+  /\brad na deployu\b/i,
+  /\brad na testovima(?: i provjerama)?\b/i,
+  /\bcodex aktivnost bez dovoljno konteksta za opis\b/i,
+  /\bcodex sesija bez zabilježenog konteksta\b/i,
+  /\bcodex sesija bez zabiljezenog konteksta\b/i,
+  /^codex chat:/i,
+];
 
 export async function handleHook(payload, env = process.env, deps = {}) {
   const now = deps.now ?? (() => new Date());
@@ -45,6 +60,7 @@ export async function handleHook(payload, env = process.env, deps = {}) {
   if (eventName === "Stop") {
     const task = await loadOrCreateTask(dirs, payload, env, now(), resolveWorkspace);
     closeTask(task, payload, now());
+    await collectGitEvidence(task, env, deps);
     await addHumanSummary(task, env, deps);
     await saveTask(dirs, task);
 
@@ -142,6 +158,16 @@ async function createTask(payload, env, startedAt, resolveWorkspace) {
     last_assistant_message: "",
     evidence: [],
     events: [],
+    semantic_evidence: [],
+    git: null,
+    summary_hr: "",
+    summary_hr_original: "",
+    summary_hr_normalized: "",
+    summary_source: "",
+    summary_confidence: 0,
+    client_message_hr: null,
+    internal_message_hr: "",
+    review_status: "needs_grouping",
   };
 }
 
@@ -154,16 +180,23 @@ async function loadOrCreateTask(dirs, payload, env, startedAt, resolveWorkspace)
 }
 
 function recordToolEvent(task, payload, eventTime) {
+  if (!Array.isArray(task.semantic_evidence)) {
+    task.semantic_evidence = [];
+  }
   const event = {
     at: eventTime.toISOString(),
     hook_event_name: payload.hook_event_name,
     tool_name: payload.tool_name,
+    event_type: classifySemanticEvent(payload),
   };
   const command = payload.tool_input?.command || payload.tool_input?.cmd;
   if (typeof command === "string" && command.trim()) {
     event.command = command.trim().slice(0, 2000);
   }
   task.events.push(event);
+  if (event.event_type && !task.semantic_evidence.includes(event.event_type)) {
+    task.semantic_evidence.push(event.event_type);
+  }
 
   for (const item of extractEvidence(payload)) {
     if (!task.evidence.includes(item)) {
@@ -183,6 +216,7 @@ function closeTask(task, payload, endedAt) {
 }
 
 function taskToSessionPayload(task) {
+  const summaryDecision = buildSummaryDecision(task);
   return {
     external_key: task.external_key,
     project: task.project,
@@ -193,14 +227,23 @@ function taskToSessionPayload(task) {
     ended_at: task.ended_at,
     duration_seconds: task.duration_seconds || 0,
     status: task.status,
-    summary_hr: task.summary_hr || fallbackSummary(task),
+    summary_hr: summaryDecision.summary_hr,
+    summary_hr_original: summaryDecision.summary_hr_original,
+    summary_hr_normalized: summaryDecision.summary_hr_normalized,
+    summary_source: summaryDecision.summary_source,
+    summary_confidence: summaryDecision.summary_confidence,
+    client_message_hr: summaryDecision.client_message_hr,
+    internal_message_hr: summaryDecision.internal_message_hr,
+    review_status: summaryDecision.review_status,
     prompt: task.prompt,
     last_assistant_message: task.last_assistant_message,
     evidence: task.evidence || [],
     technical_evidence: {
       events: task.events || [],
+      semantic_evidence: task.semantic_evidence || [],
       session_id: task.session_id,
       turn_id: task.turn_id,
+      git: task.git || null,
     },
   };
 }
@@ -216,7 +259,65 @@ function fallbackSummary(task) {
     return assistantSummary;
   }
 
-  return "Codex sesija bez zabilježenog konteksta.";
+  const noToolSummary = noToolIntentSummary(task);
+  if (noToolSummary) {
+    return noToolSummary;
+  }
+
+  return "Codex aktivnost bez dovoljno konteksta za opis.";
+}
+
+function buildSummaryDecision(task) {
+  const fallback = fallbackSummary(task);
+  const original = normalizeSummary(
+    task.summary_hr_original || task.summary_hr || fallback,
+    220,
+  ) || fallback;
+  const normalized = normalizeSummary(
+    task.summary_hr_normalized || task.summary_hr || original,
+    220,
+  ) || original;
+  const source = String(task.summary_source || "").trim() || "fallback";
+  const confidence = Number.isFinite(task.summary_confidence)
+    ? Number(task.summary_confidence)
+    : source === "model"
+      ? 0.72
+      : source === "evidence"
+        ? 0.66
+        : source === "assistant"
+          ? 0.46
+          : 0.18;
+
+  const generic = isGenericClientSummary(normalized);
+  const reviewStatus = String(task.review_status || "").trim() ||
+    (source === "fallback" || generic ? "needs_review" : "needs_grouping");
+  const clientMessageFromTask = typeof task.client_message_hr === "string"
+    ? normalizeSummary(task.client_message_hr, 220)
+    : null;
+  const clientMessage = reviewStatus === "needs_review" || generic
+    ? null
+    : (clientMessageFromTask || normalized);
+  const internalMessage = normalizeSummary(
+    task.internal_message_hr ||
+      (reviewStatus === "needs_review"
+        ? "Codex activity without enough evidence for client-facing summary."
+        : `Predloženi sažetak: ${normalized}`),
+    220,
+  );
+  const summary = clientMessage || (reviewStatus === "needs_review"
+    ? "Codex aktivnost zahtijeva ručni pregled."
+    : normalized);
+
+  return {
+    summary_hr: summary,
+    summary_hr_original: original,
+    summary_hr_normalized: normalized,
+    summary_source: source,
+    summary_confidence: Number(confidence.toFixed(2)),
+    client_message_hr: clientMessage,
+    internal_message_hr: internalMessage,
+    review_status: reviewStatus,
+  };
 }
 
 function assistantFallbackSummary(value) {
@@ -370,6 +471,101 @@ function workIntentSummary(task, changedFiles = [], inspectedFiles = [], command
   return "";
 }
 
+function noToolIntentSummary(task) {
+  const project = projectLabel(task?.project);
+  const context = cleanSummaryText([
+    task?.prompt,
+    task?.last_assistant_message,
+  ].join(" ")).toLowerCase();
+  if (!context) {
+    return "";
+  }
+
+  if (containsAny(context, [
+    "debug",
+    "bug",
+    "error",
+    "stack trace",
+    "failing test",
+    "root cause",
+    "problem",
+  ])) {
+    return `Analiza i otklanjanje problema na projektu ${project}.`;
+  }
+
+  if (containsAny(context, [
+    "review",
+    "code review",
+    "pull request",
+    "pr ",
+    "verify",
+    "validation",
+    "provjera",
+    "pregled",
+  ])) {
+    return `Pregled i verifikacija rješenja za projekt ${project}.`;
+  }
+
+  if (containsAny(context, [
+    "research",
+    "investigate",
+    "analysis",
+    "analyse",
+    "istraz",
+    "analiz",
+    "spike",
+  ])) {
+    return `Istraživanje i analiza zahtjeva za projekt ${project}.`;
+  }
+
+  if (containsAny(context, [
+    "plan",
+    "design",
+    "spec",
+    "architecture",
+    "refactor",
+    "implement",
+    "milestone",
+  ])) {
+    return `Planiranje implementacije za projekt ${project}.`;
+  }
+
+  return "";
+}
+
+function classifySemanticEvent(payload) {
+  const toolName = String(payload?.tool_name || "");
+  const command = String(payload?.tool_input?.command || payload?.tool_input?.cmd || "");
+  const signal = `${toolName} ${command}`.toLowerCase();
+
+  if (toolName === "apply_patch") {
+    return "code_change";
+  }
+  if (/\b(dotnet|go|npm|yarn|pnpm|pytest|cargo|mvn|gradle)\s+test\b/.test(signal)) {
+    return "test_run";
+  }
+  if (/\b(dotnet|go|npm|yarn|pnpm|cargo|mvn|gradle)\s+build\b/.test(signal) || /\bdocker\s+build\b/.test(signal)) {
+    return "build_run";
+  }
+  if (/\b(kubectl|kubernetes|helm|terraform|ansible|docker-compose|docker compose)\b/.test(signal)) {
+    return "deploy_or_infra";
+  }
+  if (/\b(sqlcmd|psql|mysql|mcp__mssql|db_query|database_query|company_db_query)\b/.test(signal) ||
+    /\b(select|insert|update|delete)\s+/.test(signal)) {
+    return "database_query";
+  }
+  if (/\b(rg|grep|sed|cat|less|head|tail|find|ls|tree)\b/.test(signal)) {
+    return "search_or_inspection";
+  }
+  if (/\b(debug|trace|exception|error|failing|investigat|root cause)\b/.test(signal)) {
+    return "review_or_debugging";
+  }
+  if (/\b(plan|design|spec|analysis|research|review)\b/.test(signal)) {
+    return "planning_or_analysis";
+  }
+  return "unknown";
+}
+
 function containsAny(value, needles) {
   return needles.some((needle) => value.includes(String(needle).toLowerCase()));
 }
@@ -436,6 +632,18 @@ function cleanEvidenceFile(value) {
     return "";
   }
   return file;
+}
+
+function isSensitiveGitPath(value) {
+  return sensitiveGitPathPattern.test(String(value || "").trim().toLowerCase());
+}
+
+function redactSensitiveText(value) {
+  return String(value || "")
+    .replace(/\b(authorization|auth)\b\s*[:=]\s*bearer\s+[^\s,;]+/gi, "$1=[REDACTED]")
+    .replace(/\b(authorization|auth|api[_-]?key|token|secret|password|passwd)\b\s*[:=]\s*([^\s,;]+)/gi, "$1=[REDACTED]")
+    .replace(/\bbearer\s+[a-z0-9._~-]+\b/gi, "Bearer [REDACTED]")
+    .trim();
 }
 
 function fileSummary(verb, files, maxChars) {
@@ -554,21 +762,88 @@ function isLowValueWorkSummary(value) {
     lower.startsWith("provjereno stanje repozitorija");
 }
 
+function isGenericClientSummary(value) {
+  const summary = String(value || "").trim();
+  if (!summary) {
+    return true;
+  }
+  if (isLowValueWorkSummary(summary)) {
+    return true;
+  }
+  return genericClientSummaryPatterns.some((pattern) => pattern.test(summary));
+}
+
 async function addHumanSummary(task, env, deps = {}) {
-  if (task.summary_hr || env.CODEX_WORKLOG_SUMMARY_ENABLED === "0" || env.CODEX_WORKLOG_SUMMARY_RUNNING === "1") {
+  if (!Array.isArray(task.semantic_evidence)) {
+    task.semantic_evidence = [];
+  }
+  const maxChars = summaryMaxChars(env);
+  let modelSummary = "";
+  if (env.CODEX_WORKLOG_SUMMARY_ENABLED !== "0" && env.CODEX_WORKLOG_SUMMARY_RUNNING !== "1") {
+    const summarizeTask = deps.summarizeTask ?? generateCodexSummary;
+    try {
+      modelSummary = String(await summarizeTask(task, env, deps) || "");
+    } catch {
+      // Summary generation is best-effort. Submission/queueing must still work.
+    }
+  }
+
+  const modelOriginal = normalizeSummary(modelSummary, maxChars);
+  const modelUseful = usefulSummary(modelOriginal, maxChars);
+  const evidenceSummary = evidenceFallbackSummary(task);
+  const assistantSummary = assistantFallbackSummary(task.last_assistant_message);
+  const noToolSummary = noToolIntentSummary(task);
+
+  let original = "";
+  let normalized = "";
+  let source = "fallback";
+  let confidence = 0.18;
+
+  if (modelUseful) {
+    original = modelOriginal;
+    normalized = modelUseful;
+    source = "model";
+    confidence = 0.72;
+  } else if (evidenceSummary) {
+    original = evidenceSummary;
+    normalized = normalizeSummary(evidenceSummary, maxChars);
+    source = "evidence";
+    confidence = 0.66;
+  } else if (assistantSummary) {
+    original = assistantSummary;
+    normalized = normalizeSummary(assistantSummary, maxChars);
+    source = "assistant";
+    confidence = 0.46;
+  } else if (noToolSummary) {
+    original = noToolSummary;
+    normalized = normalizeSummary(noToolSummary, maxChars);
+    source = "evidence";
+    confidence = 0.44;
+    if (!task.semantic_evidence.includes("planning_or_analysis")) {
+      task.semantic_evidence.push("planning_or_analysis");
+    }
+  } else {
+    original = "Codex aktivnost bez dovoljno konteksta za opis.";
+    normalized = original;
+  }
+
+  task.summary_hr_original = original;
+  task.summary_hr_normalized = normalized;
+  task.summary_source = source;
+  task.summary_confidence = Number(confidence.toFixed(2));
+
+  if (source === "fallback" || isGenericClientSummary(normalized)) {
+    task.client_message_hr = null;
+    task.review_status = "needs_review";
+    task.internal_message_hr = "Codex activity without enough evidence for client-facing summary.";
+    task.summary_hr = "Codex aktivnost zahtijeva ručni pregled.";
     return;
   }
 
-  const summarizeTask = deps.summarizeTask ?? generateCodexSummary;
-  try {
-    const summary = await summarizeTask(task, env, deps);
-    const normalized = normalizeSummary(summary, summaryMaxChars(env));
-    if (usefulSummary(normalized, summaryMaxChars(env))) {
-      task.summary_hr = normalized;
-    }
-  } catch {
-    // Summary generation is best-effort. Submission/queueing must still work.
-  }
+  task.client_message_hr = normalized;
+  task.review_status = "needs_grouping";
+  task.internal_message_hr = `Predloženi sažetak: ${normalized}`;
+  task.summary_hr = normalized;
 }
 
 function summaryMaxChars(env) {
@@ -654,6 +929,117 @@ function normalizeSummary(value, maxChars) {
     return "";
   }
   return summary.length > maxChars ? `${summary.slice(0, Math.max(0, maxChars - 3)).trim()}...` : summary;
+}
+
+async function collectGitEvidence(task, env, deps = {}) {
+  const workspaceRoot = String(task?.workspace_root || "").trim();
+  if (!workspaceRoot) {
+    return;
+  }
+
+  const execImpl = deps.execFile ?? execFileAsync;
+  const topLevel = await runGitCommand(execImpl, workspaceRoot, ["rev-parse", "--show-toplevel"]);
+  if (!topLevel.ok) {
+    return;
+  }
+
+  const branchFromGit = await runGitCommand(execImpl, workspaceRoot, ["branch", "--show-current"]);
+  const status = await runGitCommand(execImpl, workspaceRoot, ["status", "--porcelain"]);
+  const nameStatus = await runGitCommand(execImpl, workspaceRoot, ["diff", "--name-status"]);
+  const numstat = await runGitCommand(execImpl, workspaceRoot, ["diff", "--numstat"]);
+  const stat = await runGitCommand(execImpl, workspaceRoot, ["diff", "--stat"]);
+  const gitLog = await runGitCommand(execImpl, workspaceRoot, [
+    "log",
+    "--oneline",
+    "--decorate",
+    "--since",
+    String(task?.started_at || ""),
+  ]);
+
+  const changedByPath = new Map();
+  for (const line of splitLines(nameStatus.stdout)) {
+    const [statusCode, ...pathParts] = line.trim().split(/\s+/);
+    const filePath = cleanEvidenceFile(pathParts.join(" "));
+    if (!statusCode || !filePath || isSensitiveGitPath(filePath)) {
+      continue;
+    }
+    changedByPath.set(filePath, {
+      path: filePath,
+      status: statusCode.trim(),
+      added: 0,
+      removed: 0,
+    });
+  }
+
+  for (const line of splitLines(numstat.stdout)) {
+    const parts = line.trim().split(/\t+/);
+    if (parts.length < 3) {
+      continue;
+    }
+    const filePath = cleanEvidenceFile(parts.slice(2).join("\t"));
+    if (!filePath || isSensitiveGitPath(filePath)) {
+      continue;
+    }
+    const target = changedByPath.get(filePath) || {
+      path: filePath,
+      status: "M",
+      added: 0,
+      removed: 0,
+    };
+    target.added = parseGitStatNumber(parts[0]);
+    target.removed = parseGitStatNumber(parts[1]);
+    changedByPath.set(filePath, target);
+  }
+
+  task.git = {
+    workspace_root: topLevel.stdout || workspaceRoot,
+    branch: (branchFromGit.stdout || task.branch || "").trim(),
+    dirty: Boolean(status.stdout.trim()),
+    changed_files: Array.from(changedByPath.values()).slice(0, 100),
+    diff_stat: splitLines(stat.stdout)
+      .map((line) => redactSensitiveText(line))
+      .filter((line) => {
+        const pathPart = cleanEvidenceFile(line.split("|")[0] || "");
+        return !pathPart || !isSensitiveGitPath(pathPart);
+      })
+      .slice(0, 40),
+    recent_commits: splitLines(gitLog.stdout).slice(0, 20).map((line) => {
+      const trimmed = line.trim();
+      const firstSpace = trimmed.indexOf(" ");
+      if (firstSpace < 0) {
+        return {sha: trimmed, message: ""};
+      }
+      return {
+        sha: trimmed.slice(0, firstSpace),
+        message: redactSensitiveText(trimmed.slice(firstSpace + 1)),
+      };
+    }),
+  };
+}
+
+async function runGitCommand(execImpl, cwd, args) {
+  try {
+    const {stdout} = await execImpl("git", ["-C", cwd, ...args], {
+      cwd,
+      timeout: gitEvidenceTimeoutMs,
+      maxBuffer: gitEvidenceMaxBytes,
+    });
+    return {ok: true, stdout: String(stdout || "").trim()};
+  } catch {
+    return {ok: false, stdout: ""};
+  }
+}
+
+function parseGitStatNumber(value) {
+  const number = Number.parseInt(String(value || "").trim(), 10);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function splitLines(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 async function submitOrQueue(dirs, payload, env, deps) {

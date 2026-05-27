@@ -152,7 +152,14 @@ test("Stop closes and queues a session when Wakapi credentials are missing", asy
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
     assert.equal(payload.sessions[0].external_key, "codex:local:thread-1:turn-1");
     assert.equal(payload.sessions[0].duration_seconds, 1200);
-    assert.equal(payload.sessions[0].summary_hr, "Codex sesija bez zabilježenog konteksta.");
+    assert.equal(payload.sessions[0].summary_hr, "Planiranje implementacije za projekt OnixServer.");
+    assert.equal(payload.sessions[0].summary_hr_original, "Planiranje implementacije za projekt OnixServer.");
+    assert.equal(payload.sessions[0].summary_hr_normalized, "Planiranje implementacije za projekt OnixServer.");
+    assert.equal(payload.sessions[0].summary_source, "evidence");
+    assert.equal(payload.sessions[0].summary_confidence, 0.44);
+    assert.equal(payload.sessions[0].client_message_hr, "Planiranje implementacije za projekt OnixServer.");
+    assert.equal(payload.sessions[0].review_status, "needs_grouping");
+    assert.match(payload.sessions[0].internal_message_hr, /Predloženi sažetak/);
     assert.doesNotMatch(payload.sessions[0].summary_hr, /sync codex worklogs/i);
     assert.equal(payload.sessions[0].last_assistant_message, "Implemented Codex task worklogs.");
   });
@@ -346,7 +353,12 @@ test("Stop falls back to inspected file evidence instead of assistant reply text
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex aktivnost zahtijeva ručni pregled.");
+    assert.equal(payload.sessions[0].summary_hr_original, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.");
+    assert.equal(payload.sessions[0].summary_hr_normalized, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.");
+    assert.equal(payload.sessions[0].summary_source, "evidence");
+    assert.equal(payload.sessions[0].client_message_hr, null);
+    assert.equal(payload.sessions[0].review_status, "needs_review");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /you use it as/i);
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
   });
@@ -403,7 +415,12 @@ test("Stop falls back to command category evidence when no files are captured", 
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex aktivnost zahtijeva ručni pregled.");
+    assert.equal(payload.sessions[0].summary_hr_original, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.");
+    assert.equal(payload.sessions[0].summary_hr_normalized, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.");
+    assert.equal(payload.sessions[0].summary_source, "evidence");
+    assert.equal(payload.sessions[0].client_message_hr, null);
+    assert.equal(payload.sessions[0].review_status, "needs_review");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /rad s codexom|patch applied/i);
   });
 });
@@ -457,8 +474,72 @@ test("Stop falls back to tool category evidence when command text is absent", as
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Analiza podataka u bazi za projekt URA.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex aktivnost zahtijeva ručni pregled.");
+    assert.equal(payload.sessions[0].summary_hr_original, "Analiza podataka u bazi za projekt URA.");
+    assert.equal(payload.sessions[0].summary_hr_normalized, "Analiza podataka u bazi za projekt URA.");
+    assert.equal(payload.sessions[0].summary_source, "evidence");
+    assert.equal(payload.sessions[0].client_message_hr, null);
+    assert.equal(payload.sessions[0].review_status, "needs_review");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /rad s codexom|good/i);
+  });
+});
+
+test("Stop marks generic test-run summary as needs_review", async () => {
+  await withWorklogHome(async (home) => {
+    const env = testEnv(home);
+    let current = now;
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-test-run",
+        turn_id: "turn-test-run",
+        cwd: "/Users/igbenic/Projects/OnixServer",
+        prompt: "run tests for support service merge",
+      },
+      env,
+      deps,
+    );
+
+    await handleHook(
+      {
+        hook_event_name: "PostToolUse",
+        session_id: "thread-test-run",
+        turn_id: "turn-test-run",
+        cwd: "/Users/igbenic/Projects/OnixServer",
+        tool_name: "Bash",
+        tool_input: {
+          command: "dotnet test OnixWeb.sln --filter FullyQualifiedName~SupportServiceMergeTests",
+        },
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:20:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "Stop",
+        session_id: "thread-test-run",
+        turn_id: "turn-test-run",
+        cwd: "/Users/igbenic/Projects/OnixServer",
+        last_assistant_message: "Ran tests and confirmed expected behavior.",
+      },
+      env,
+      deps,
+    );
+
+    const queued = await readdir(path.join(home, "queue"));
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].summary_hr, "Codex aktivnost zahtijeva ručni pregled.");
+    assert.equal(payload.sessions[0].summary_hr_original, "Rad na testovima i provjerama projekta OnixServer.");
+    assert.equal(payload.sessions[0].summary_hr_normalized, "Rad na testovima i provjerama projekta OnixServer.");
+    assert.equal(payload.sessions[0].review_status, "needs_review");
+    assert.equal(payload.sessions[0].client_message_hr, null);
   });
 });
 
@@ -554,7 +635,9 @@ test("Stop skips English title from assistant JSON", async () => {
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Codex sesija bez zabilježenog konteksta.");
+    assert.equal(payload.sessions[0].summary_hr, "Pregled i verifikacija rješenja za projekt URA.");
+    assert.equal(payload.sessions[0].summary_source, "evidence");
+    assert.equal(payload.sessions[0].review_status, "needs_grouping");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
     assert.doesNotMatch(payload.sessions[0].summary_hr, /title/i);
   });
@@ -596,7 +679,11 @@ test("Stop skips English message from assistant JSON", async () => {
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Codex sesija bez zabilježenog konteksta.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex aktivnost zahtijeva ručni pregled.");
+    assert.equal(payload.sessions[0].summary_hr_normalized, "Codex aktivnost bez dovoljno konteksta za opis.");
+    assert.equal(payload.sessions[0].summary_source, "fallback");
+    assert.equal(payload.sessions[0].client_message_hr, null);
+    assert.equal(payload.sessions[0].review_status, "needs_review");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
     assert.doesNotMatch(payload.sessions[0].summary_hr, /message/i);
   });
@@ -642,7 +729,11 @@ test("Stop accepts Croatian generated summaries only", async () => {
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Codex sesija bez zabilježenog konteksta.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex aktivnost zahtijeva ručni pregled.");
+    assert.equal(payload.sessions[0].summary_hr_normalized, "Codex aktivnost bez dovoljno konteksta za opis.");
+    assert.equal(payload.sessions[0].summary_source, "fallback");
+    assert.equal(payload.sessions[0].client_message_hr, null);
+    assert.equal(payload.sessions[0].review_status, "needs_review");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /generated via/i);
   });
 });
@@ -683,7 +774,11 @@ test("Stop skips useless assistant fallback text", async () => {
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Codex sesija bez zabilježenog konteksta.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex aktivnost zahtijeva ručni pregled.");
+    assert.equal(payload.sessions[0].summary_hr_normalized, "Codex aktivnost bez dovoljno konteksta za opis.");
+    assert.equal(payload.sessions[0].summary_source, "fallback");
+    assert.equal(payload.sessions[0].client_message_hr, null);
+    assert.equal(payload.sessions[0].review_status, "needs_review");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /^\\.\\.\\.$/);
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
   });
@@ -725,7 +820,11 @@ test("Stop skips filler assistant acknowledgements", async () => {
 
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
-    assert.equal(payload.sessions[0].summary_hr, "Codex sesija bez zabilježenog konteksta.");
+    assert.equal(payload.sessions[0].summary_hr, "Codex aktivnost zahtijeva ručni pregled.");
+    assert.equal(payload.sessions[0].summary_hr_normalized, "Codex aktivnost bez dovoljno konteksta za opis.");
+    assert.equal(payload.sessions[0].summary_source, "fallback");
+    assert.equal(payload.sessions[0].client_message_hr, null);
+    assert.equal(payload.sessions[0].review_status, "needs_review");
     assert.notEqual(payload.sessions[0].summary_hr, "You're right.");
     assert.doesNotMatch(payload.sessions[0].summary_hr, /raw user message/i);
   });
@@ -795,6 +894,16 @@ test("Stop invokes Codex summary generation with the low model and recursion gua
       now: () => current,
       resolveWorkspace: async (cwd) => cwd,
       execFile: async (command, args, options) => {
+        if (command === "git") {
+          const action = args.slice(2).join(" ");
+          if (action.startsWith("rev-parse --show-toplevel")) {
+            return {stdout: "/Users/igbenic/Projects/wakapi\n", stderr: ""};
+          }
+          if (action.startsWith("branch --show-current")) {
+            return {stdout: "codex/test\n", stderr: ""};
+          }
+          return {stdout: "", stderr: ""};
+        }
         execCall = {command, args, options};
         const outputIndex = args.indexOf("--output-last-message");
         await mkdir(path.dirname(args[outputIndex + 1]), {recursive: true});
@@ -848,6 +957,88 @@ test("Stop invokes Codex summary generation with the low model and recursion gua
     const queued = await readdir(path.join(home, "queue"));
     const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
     assert.equal(payload.sessions[0].summary_hr, "Generiran Codex sažetak rada.");
+  });
+});
+
+test("Stop captures git diff/status/log evidence in technical payload", async () => {
+  await withWorklogHome(async (home) => {
+    const env = testEnv(home);
+    let current = now;
+    const deps = {
+      now: () => current,
+      resolveWorkspace: async (cwd) => cwd,
+      execFile: async (command, args) => {
+        if (command !== "git") {
+          throw new Error(`unexpected command ${command}`);
+        }
+        const action = args.slice(2).join(" ");
+        if (action.startsWith("rev-parse --show-toplevel")) {
+          return {stdout: "/repo\n", stderr: ""};
+        }
+        if (action.startsWith("branch --show-current")) {
+          return {stdout: "feature/codex-phase1\n", stderr: ""};
+        }
+        if (action.startsWith("status --porcelain")) {
+          return {stdout: " M src/a.go\nA  src/b.go\nM  .env\n", stderr: ""};
+        }
+        if (action.startsWith("diff --name-status")) {
+          return {stdout: "M\tsrc/a.go\nA\tsrc/b.go\nM\t.env\n", stderr: ""};
+        }
+        if (action.startsWith("diff --numstat")) {
+          return {stdout: "5\t2\tsrc/a.go\n10\t0\tsrc/b.go\n1\t1\t.env\n", stderr: ""};
+        }
+        if (action.startsWith("diff --stat")) {
+          return {stdout: " src/a.go | 7 +++++--\n src/b.go | 10 ++++++++++\n .env | 2 +-\n", stderr: ""};
+        }
+        if (action.startsWith("log --oneline --decorate --since")) {
+          return {stdout: "abc1234 feat: update a api_key=topsecret\nbeef567 fix: update b Authorization: Bearer token123\n", stderr: ""};
+        }
+        throw new Error(`unexpected git action ${action}`);
+      },
+    };
+
+    await handleHook(
+      {
+        hook_event_name: "UserPromptSubmit",
+        session_id: "thread-git",
+        turn_id: "turn-git",
+        cwd: "/repo",
+        prompt: "collect git evidence on stop",
+      },
+      env,
+      deps,
+    );
+
+    current = new Date("2026-05-14T09:05:00.000Z");
+    await handleHook(
+      {
+        hook_event_name: "Stop",
+        session_id: "thread-git",
+        turn_id: "turn-git",
+        cwd: "/repo",
+        last_assistant_message: "ok",
+      },
+      env,
+      deps,
+    );
+
+    const queued = await readdir(path.join(home, "queue"));
+    const payload = JSON.parse(await readFile(path.join(home, "queue", queued[0]), "utf8"));
+    assert.equal(payload.sessions[0].technical_evidence.git.workspace_root, "/repo");
+    assert.equal(payload.sessions[0].technical_evidence.git.branch, "feature/codex-phase1");
+    assert.equal(payload.sessions[0].technical_evidence.git.dirty, true);
+    assert.deepEqual(payload.sessions[0].technical_evidence.git.changed_files, [
+      {path: "src/a.go", status: "M", added: 5, removed: 2},
+      {path: "src/b.go", status: "A", added: 10, removed: 0},
+    ]);
+    assert.deepEqual(payload.sessions[0].technical_evidence.git.diff_stat, [
+      "src/a.go | 7 +++++--",
+      "src/b.go | 10 ++++++++++",
+    ]);
+    assert.deepEqual(payload.sessions[0].technical_evidence.git.recent_commits, [
+      {sha: "abc1234", message: "feat: update a api_key=[REDACTED]"},
+      {sha: "beef567", message: "fix: update b Authorization=[REDACTED]"},
+    ]);
   });
 });
 

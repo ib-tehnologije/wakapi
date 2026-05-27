@@ -1,6 +1,7 @@
 package services
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -39,6 +40,34 @@ func (r *inMemoryCodexTaskRepository) GetByUserWithin(userID string, from, to *t
 			continue
 		}
 		result = append(result, session)
+	}
+	return result, nil
+}
+
+func (r *inMemoryCodexTaskRepository) GetByUserExternalKey(userID string, externalKey string) (*models.CodexTaskSession, error) {
+	return r.records[userID+":"+externalKey], nil
+}
+
+func (r *inMemoryCodexTaskRepository) ListByUserForReview(userID string, from, to *time.Time, project string, limit int) ([]*models.CodexTaskSession, error) {
+	result := make([]*models.CodexTaskSession, 0)
+	for _, session := range r.records {
+		if session.UserID != userID {
+			continue
+		}
+		if project != "" && session.Project != project {
+			continue
+		}
+		start := session.StartedAt.T()
+		if from != nil && start.Before(*from) {
+			continue
+		}
+		if to != nil && start.After(*to) {
+			continue
+		}
+		result = append(result, session)
+	}
+	if limit > 0 && len(result) > limit {
+		return result[:limit], nil
 	}
 	return result, nil
 }
@@ -131,7 +160,11 @@ func TestCodexTaskService_UpsertManyPrefersEvidenceOverAssistantReply(t *testing
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.", created[0].SummaryHR)
+	assert.Equal(t, "Codex aktivnost zahtijeva ručni pregled.", created[0].SummaryHR)
+	assert.Equal(t, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.", created[0].SummaryHROriginal)
+	assert.Equal(t, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.", created[0].SummaryHRNormalized)
+	assert.Equal(t, "needs_review", created[0].ReviewStatus)
+	assert.Equal(t, "", created[0].ClientMessageHR)
 	assert.NotContains(t, created[0].SummaryHR, "You use it as")
 }
 
@@ -162,7 +195,11 @@ func TestCodexTaskService_UpsertManyUsesCommandCategoryWhenNoFilesWereCaptured(t
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.", created[0].SummaryHR)
+	assert.Equal(t, "Codex aktivnost zahtijeva ručni pregled.", created[0].SummaryHR)
+	assert.Equal(t, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.", created[0].SummaryHROriginal)
+	assert.Equal(t, "Rad na deployu i Kubernetes konfiguraciji projekta IBTechK3SFleetRepo.", created[0].SummaryHRNormalized)
+	assert.Equal(t, "needs_review", created[0].ReviewStatus)
+	assert.Equal(t, "", created[0].ClientMessageHR)
 	assert.NotContains(t, created[0].SummaryHR, "Patch applied")
 }
 
@@ -192,8 +229,44 @@ func TestCodexTaskService_UpsertManyUsesToolCategoryWhenCommandTextIsAbsent(t *t
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Analiza podataka u bazi za projekt URA.", created[0].SummaryHR)
+	assert.Equal(t, "Codex aktivnost zahtijeva ručni pregled.", created[0].SummaryHR)
+	assert.Equal(t, "Analiza podataka u bazi za projekt URA.", created[0].SummaryHROriginal)
+	assert.Equal(t, "Analiza podataka u bazi za projekt URA.", created[0].SummaryHRNormalized)
+	assert.Equal(t, "needs_review", created[0].ReviewStatus)
+	assert.Equal(t, "", created[0].ClientMessageHR)
 	assert.NotContains(t, created[0].SummaryHR, "Good")
+}
+
+func TestCodexTaskService_UpsertManyMarksTestRunIntentAsNeedsReview(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	started := time.Date(2026, 5, 14, 9, 0, 0, 0, time.UTC)
+	ended := started.Add(5 * time.Minute)
+	user := &models.User{ID: "user"}
+
+	created, err := sut.UpsertMany(user, []*CodexTaskSessionInput{{
+		ExternalKey: "codex:local:thread-test-intent:turn-1",
+		Project:     "OnixServer",
+		StartedAt:   started,
+		EndedAt:     &ended,
+		TechnicalEvidenceJSON: EncodeCodexEvidence(map[string]any{
+			"events": []map[string]any{
+				{
+					"hook_event_name": "PostToolUse",
+					"tool_name":       "Bash",
+					"command":         "dotnet test OnixWeb.sln --filter FullyQualifiedName~SupportServiceMergeTests",
+				},
+			},
+		}),
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	assert.Equal(t, "Codex aktivnost zahtijeva ručni pregled.", created[0].SummaryHR)
+	assert.Equal(t, "Rad na testovima i provjerama projekta OnixServer.", created[0].SummaryHROriginal)
+	assert.Equal(t, "needs_review", created[0].ReviewStatus)
+	assert.Equal(t, "", created[0].ClientMessageHR)
 }
 
 func TestCodexTaskService_UpsertManyDoesNotClassifyGeneratedOnixPhoneWorkAsURA(t *testing.T) {
@@ -219,6 +292,72 @@ func TestCodexTaskService_UpsertManyDoesNotClassifyGeneratedOnixPhoneWorkAsURA(t
 	assert.Equal(t, "Rad na OnixPhone DMS ispisu i obradi dokumenata.", created[0].SummaryHR)
 }
 
+func TestCodexTaskService_ReviewQueueApproveEditRejectAndInternal(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	started := time.Date(2026, 5, 14, 9, 0, 0, 0, time.UTC)
+	ended := started.Add(5 * time.Minute)
+	user := &models.User{ID: "user"}
+
+	created, err := sut.UpsertMany(user, []*CodexTaskSessionInput{{
+		ExternalKey:         "codex:local:thread-review:turn-1",
+		Project:             "OnixServer",
+		StartedAt:           started,
+		EndedAt:             &ended,
+		SummaryHROriginal:   "Planiranje implementacije za projekt OnixServer.",
+		SummaryHRNormalized: "Planiranje implementacije za projekt OnixServer.",
+		SummarySource:       "evidence",
+		SummaryConfidence:   0.44,
+		ReviewStatus:        "needs_review",
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+
+	pending, err := sut.ListReviewQueue(user, nil, nil, "OnixServer", "", 50)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal(t, "codex:local:thread-review:turn-1", pending[0].ExternalKey)
+
+	approved, err := sut.ReviewSession(user, &CodexTaskReviewInput{
+		ExternalKey:     "codex:local:thread-review:turn-1",
+		Action:          "approve",
+		ClientMessageHR: "Planirana i potvrđena implementacija sinkronizacije Codex workloga za OnixServer.",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "approved", approved.ReviewStatus)
+	assert.Equal(t, "Planirana i potvrđena implementacija sinkronizacije Codex workloga za OnixServer.", approved.ClientMessageHR)
+	assert.Equal(t, "Planirana i potvrđena implementacija sinkronizacije Codex workloga za OnixServer.", approved.SummaryHR)
+
+	edited, err := sut.ReviewSession(user, &CodexTaskReviewInput{
+		ExternalKey:     "codex:local:thread-review:turn-1",
+		Action:          "edit",
+		ClientMessageHR: "Ručno uređen sažetak za sinkronizaciju Codex workloga.",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "approved", edited.ReviewStatus)
+	assert.Equal(t, "Ručno uređen sažetak za sinkronizaciju Codex workloga.", edited.ClientMessageHR)
+
+	rejected, err := sut.ReviewSession(user, &CodexTaskReviewInput{
+		ExternalKey: "codex:local:thread-review:turn-1",
+		Action:      "reject",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "rejected", rejected.ReviewStatus)
+	assert.Equal(t, "", rejected.ClientMessageHR)
+	assert.Equal(t, "Codex aktivnost je odbijena za klijentsku sinkronizaciju.", rejected.SummaryHR)
+
+	internalOnly, err := sut.ReviewSession(user, &CodexTaskReviewInput{
+		ExternalKey: "codex:local:thread-review:turn-1",
+		Action:      "internal",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "internal_only", internalOnly.ReviewStatus)
+	assert.Equal(t, "", internalOnly.ClientMessageHR)
+	assert.Equal(t, "Codex aktivnost je zadržana samo za internu evidenciju.", internalOnly.SummaryHR)
+}
+
 func TestCodexTaskService_UpsertManySkipsEnglishAssistantTitleJSON(t *testing.T) {
 	repo := newInMemoryCodexTaskRepository()
 	sut := NewCodexTaskService(repo)
@@ -238,7 +377,7 @@ func TestCodexTaskService_UpsertManySkipsEnglishAssistantTitleJSON(t *testing.T)
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Codex sesija bez zabilježenog konteksta.", created[0].SummaryHR)
+	assert.Equal(t, "Pregled i verifikacija rješenja za projekt URA.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "raw user message")
 	assert.NotContains(t, created[0].SummaryHR, "title")
 }
@@ -262,7 +401,9 @@ func TestCodexTaskService_UpsertManySkipsEnglishAssistantMessageJSON(t *testing.
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Codex sesija bez zabilježenog konteksta.", created[0].SummaryHR)
+	assert.Equal(t, "Codex aktivnost zahtijeva ručni pregled.", created[0].SummaryHR)
+	assert.Equal(t, "needs_review", created[0].ReviewStatus)
+	assert.Equal(t, "", created[0].ClientMessageHR)
 	assert.NotContains(t, created[0].SummaryHR, "raw user message")
 	assert.NotContains(t, created[0].SummaryHR, "message")
 }
@@ -286,7 +427,9 @@ func TestCodexTaskService_UpsertManySkipsEnglishProvidedSummary(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Codex sesija bez zabilježenog konteksta.", created[0].SummaryHR)
+	assert.Equal(t, "Codex aktivnost zahtijeva ručni pregled.", created[0].SummaryHR)
+	assert.Equal(t, "needs_review", created[0].ReviewStatus)
+	assert.Equal(t, "", created[0].ClientMessageHR)
 	assert.NotContains(t, created[0].SummaryHR, "Generated via")
 }
 
@@ -309,7 +452,9 @@ func TestCodexTaskService_UpsertManySkipsUselessAssistantFallbackText(t *testing
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Codex sesija bez zabilježenog konteksta.", created[0].SummaryHR)
+	assert.Equal(t, "Codex aktivnost zahtijeva ručni pregled.", created[0].SummaryHR)
+	assert.Equal(t, "needs_review", created[0].ReviewStatus)
+	assert.Equal(t, "", created[0].ClientMessageHR)
 	assert.NotEqual(t, "...", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "raw user message")
 }
@@ -333,7 +478,9 @@ func TestCodexTaskService_UpsertManySkipsFillerAssistantAcknowledgements(t *test
 
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	assert.Equal(t, "Codex sesija bez zabilježenog konteksta.", created[0].SummaryHR)
+	assert.Equal(t, "Codex aktivnost zahtijeva ručni pregled.", created[0].SummaryHR)
+	assert.Equal(t, "needs_review", created[0].ReviewStatus)
+	assert.Equal(t, "", created[0].ClientMessageHR)
 	assert.NotEqual(t, "You're right.", created[0].SummaryHR)
 	assert.NotContains(t, created[0].SummaryHR, "raw user message")
 }
@@ -361,7 +508,7 @@ func TestCodexTaskService_GetWorklogsReturnsClosedTaskShape(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, worklogs, 1)
 	assert.Equal(t, "CodexTask", worklogs[0].Source)
-	assert.Equal(t, "codex:chat:local:thread-1:20260514:OnixServer", worklogs[0].ExternalKey)
+	assert.True(t, strings.HasPrefix(worklogs[0].ExternalKey, "codex:chat:local:thread-1:20260514:OnixServer:"))
 	assert.Equal(t, "Implementirana je sinkronizacija Codex zadataka.", worklogs[0].Summary)
 	assert.Equal(t, 600.0, worklogs[0].DurationSeconds)
 }
@@ -429,7 +576,7 @@ func TestCodexTaskService_GetWorklogsGroupsClosedTurnsByChatProjectAndDay(t *tes
 
 	require.NoError(t, err)
 	require.Len(t, worklogs, 1)
-	assert.Equal(t, "codex:chat:local:thread-1:20260514:OnixServer", worklogs[0].ExternalKey)
+	assert.True(t, strings.HasPrefix(worklogs[0].ExternalKey, "codex:chat:local:thread-1:20260514:OnixServer:"))
 	assert.Equal(t, firstStart, worklogs[0].StartedAt)
 	assert.Equal(t, secondEnd, worklogs[0].EndedAt)
 	assert.Equal(t, 900.0, worklogs[0].DurationSeconds)
@@ -477,7 +624,7 @@ func TestCodexTaskService_GetWorklogsSkipsTinyTurnsWithoutEvidence(t *testing.T)
 
 	require.NoError(t, err)
 	require.Len(t, worklogs, 1)
-	assert.Equal(t, "codex:chat:local:thread-real:20260514:URA", worklogs[0].ExternalKey)
+	assert.True(t, strings.HasPrefix(worklogs[0].ExternalKey, "codex:chat:local:thread-real:20260514:URA:"))
 	assert.Equal(t, 600.0, worklogs[0].DurationSeconds)
 }
 
@@ -505,7 +652,7 @@ func TestCodexTaskService_GetWorklogsKeepsTinyTurnsWithEvidence(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, worklogs, 1)
-	assert.Equal(t, "codex:chat:local:thread-short:20260514:URA", worklogs[0].ExternalKey)
+	assert.True(t, strings.HasPrefix(worklogs[0].ExternalKey, "codex:chat:local:thread-short:20260514:URA:"))
 	assert.Equal(t, 5.0, worklogs[0].DurationSeconds)
 }
 
@@ -569,4 +716,45 @@ func TestCodexTaskService_GetWorklogsBuildsWakapiIntentFromTouchedRepo(t *testin
 	assert.Equal(t, "Rad na Codex worklog integraciji u Wakapiju.", worklogs[0].Summary)
 	assert.NotContains(t, worklogs[0].Summary, "Ažurirano")
 	assert.NotContains(t, worklogs[0].Summary, "codex_task_service.go")
+}
+
+func TestCodexTaskService_GetWorklogsSplitsSameProjectDifferentObjectivesSameDay(t *testing.T) {
+	repo := newInMemoryCodexTaskRepository()
+	sut := NewCodexTaskService(repo)
+
+	user := &models.User{ID: "user"}
+	firstStart := time.Date(2026, 5, 14, 9, 0, 0, 0, time.UTC)
+	firstEnd := firstStart.Add(15 * time.Minute)
+	secondStart := time.Date(2026, 5, 14, 9, 20, 0, 0, time.UTC)
+	secondEnd := secondStart.Add(15 * time.Minute)
+
+	_, err := sut.UpsertMany(user, []*CodexTaskSessionInput{
+		{
+			ExternalKey:     "codex:local:thread-obj:turn-1",
+			Project:         "OnixServer",
+			StartedAt:       firstStart,
+			EndedAt:         &firstEnd,
+			DurationSeconds: 900,
+			Prompt:          "ONX-101 run support merge tests and verify sync behavior",
+			SummaryHR:       "Implementirana je sinkronizacija Codex zadataka.",
+			Evidence:        []string{"command: dotnet test OnixWeb.sln --filter FullyQualifiedName~WakaTimeSyncServiceTests"},
+		},
+		{
+			ExternalKey:     "codex:local:thread-obj:turn-2",
+			Project:         "OnixServer",
+			StartedAt:       secondStart,
+			EndedAt:         &secondEnd,
+			DurationSeconds: 900,
+			Prompt:          "ONX-202 inspect support ticket data in SQL",
+			SummaryHR:       "Provjereno stanje baze podataka.",
+			Evidence:        []string{"command: sqlcmd -S localhost -Q \"SELECT TOP 1 * FROM SupportTickets\""},
+		},
+	})
+	require.NoError(t, err)
+
+	worklogs, err := sut.GetWorklogs(user, &firstStart, &secondEnd, "OnixServer")
+
+	require.NoError(t, err)
+	require.Len(t, worklogs, 2)
+	assert.NotEqual(t, worklogs[0].ExternalKey, worklogs[1].ExternalKey)
 }
