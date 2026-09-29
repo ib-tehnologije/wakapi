@@ -53,7 +53,6 @@ func NewSummaryService(summaryRepo repositories.ISummaryRepository, heartbeatSer
 		}
 	}(&sub1)
 
-<<<<<<< HEAD
 	sub2 := srv.eventBus.Subscribe(0, config.EventLanguageMappingsChanged)
 	go func(sub *hub.Subscription) {
 		for m := range sub.Receiver {
@@ -65,8 +64,7 @@ func NewSummaryService(summaryRepo repositories.ISummaryRepository, heartbeatSer
 		}
 	}(&sub2)
 
-=======
-	sub2 := srv.eventBus.Subscribe(0, config.EventHeartbeatCreate)
+	sub3 := srv.eventBus.Subscribe(0, config.EventHeartbeatCreate)
 	go func(sub *hub.Subscription) {
 		for m := range sub.Receiver {
 			heartbeat := m.Fields[config.FieldPayload].(*models.Heartbeat)
@@ -85,16 +83,15 @@ func NewSummaryService(summaryRepo repositories.ISummaryRepository, heartbeatSer
 
 			srv.heartbeatCache.SetDefault(cacheKey, heartbeat.Time.T())
 		}
-	}(&sub2)
+	}(&sub3)
 
-	sub3 := srv.eventBus.Subscribe(0, config.TopicAlias) // published from alias service
+	sub4 := srv.eventBus.Subscribe(0, config.TopicAlias) // published from alias service
 	go func(sub *hub.Subscription) {
 		for m := range sub.Receiver {
 			srv.invalidateUserCache(m.Fields[config.FieldUserId].(string))
 		}
-	}(&sub3)
+	}(&sub4)
 
->>>>>>> upstream/master
 	return srv
 }
 

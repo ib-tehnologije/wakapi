@@ -172,18 +172,12 @@ func (h *LoginHandler) PostLogout(w http.ResponseWriter, r *http.Request) {
 	if user := middlewares.GetPrincipal(r); user != nil {
 		h.userSrvc.FlushUserCache(user.ID)
 	}
-<<<<<<< HEAD
-	routeutils.ClearSession(r, w)                                    // clear all session data
-	http.SetCookie(w, h.config.GetClearCookie(models.AuthCookieKey)) // clear auth token
-	http.Redirect(w, r, fmt.Sprintf("%s/", strings.TrimSuffix(h.config.Server.BasePathOrRoot(), "/")), http.StatusFound)
-=======
 	routeutils.ClearSession(r, w)                                                // clear all session data
 	http.SetCookie(w, h.config.GetClearCookie(models.AuthCookieKey))             // clear auth token
 	http.SetCookie(w, h.config.GetClearCookie(models.OidcIdTokenCookieKey))      // clear oidc id token
 	http.SetCookie(w, h.config.GetClearCookie(models.OidcRefreshTokenCookieKey)) // clear oidc refresh token
 	http.SetCookie(w, h.config.GetClearCookie(models.OidcProviderCookieKey))     // clear oidc provider cookie
-	http.Redirect(w, r, fmt.Sprintf("%s/", h.config.Server.BasePath), http.StatusFound)
->>>>>>> upstream/master
+	http.Redirect(w, r, fmt.Sprintf("%s/", strings.TrimSuffix(h.config.Server.BasePathOrRoot(), "/")), http.StatusFound)
 }
 
 func (h *LoginHandler) GetSignup(w http.ResponseWriter, r *http.Request) {

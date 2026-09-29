@@ -48,10 +48,8 @@ func newTokenCipher() TokenCipher {
 		secures = append(secures, securecookie.New(hashKey, blockKey))
 	}
 
-	// Fallback to runtime SecureCookie (may be transient across restarts, but keeps backward compatibility within a session).
-	if cfg.Security.SecureCookie != nil {
-		secures = append(secures, cfg.Security.SecureCookie)
-	}
+	// Fallback to the configured auth cookie cipher when no password salt is set.
+	secures = append(secures, config.GetAuthCookie())
 
 	return &secureCookieCipher{secures: secures}
 }

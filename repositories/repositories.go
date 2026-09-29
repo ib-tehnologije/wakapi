@@ -159,7 +159,6 @@ type IApiKeyRepository interface {
 	Delete(string) error
 }
 
-<<<<<<< HEAD
 type IScmAccountRepository interface {
 	IBaseRepository
 	Upsert(*models.ScmAccount) error
@@ -202,7 +201,8 @@ type ICommitStatRepository interface {
 	GetByUserProjectBranch(string, string, string, int, int) ([]*models.CommitStat, int64, error)
 	GetByUserProjectBranchAndHash(string, string, string, string) (*models.CommitStat, error)
 	DeleteByRepo(string) error
-=======
+}
+
 type IWebAuthnRepository interface {
 	IBaseRepository
 	Insert(*models.WebAuthnCredential) (*models.WebAuthnCredential, error)
@@ -210,5 +210,4 @@ type IWebAuthnRepository interface {
 	GetByUserAndName(string, string) (*models.WebAuthnCredential, error)
 	Update(*models.WebAuthnCredential) error
 	Delete(*models.WebAuthnCredential) error
->>>>>>> upstream/master
 }

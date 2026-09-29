@@ -282,6 +282,7 @@ func (m *mockUserService) GetUserByResetToken(string) (*models.User, error)     
 func (m *mockUserService) GetUserByUnsubscribeToken(string) (*models.User, error)  { return nil, nil }
 func (m *mockUserService) GetUserByStripeCustomerId(string) (*models.User, error)  { return nil, nil }
 func (m *mockUserService) GetUserByOidc(string, string) (*models.User, error)      { return nil, nil }
+func (m *mockUserService) GetUserByWebAuthnID(string) (*models.User, error)        { return nil, nil }
 func (m *mockUserService) GetAll() ([]*models.User, error)                         { return nil, nil }
 func (m *mockUserService) GetAllMapped() (map[string]*models.User, error)          { return nil, nil }
 func (m *mockUserService) GetMany([]string) ([]*models.User, error)                { return nil, nil }

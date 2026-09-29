@@ -67,7 +67,7 @@ func (suite *WebAuthnTestSuite) BeforeTest(suiteName, testName string) {
 	suite.ProjectLabelService = new(mocks.ProjectLabelServiceMock)
 	suite.ApiKeyService = new(mocks.MockApiKeyService)
 	suite.LanguageMappingService = new(mocks.LanguageMappingServiceMock)
-	suite.SettingsHandler = NewSettingsHandler(suite.UserService, suite.HeartbeatService, nil, nil, suite.AliasService, nil, suite.LanguageMappingService, suite.ProjectLabelService, nil, nil, suite.ApiKeyService, suite.WebauthnService)
+	suite.SettingsHandler = NewSettingsHandler(suite.UserService, suite.HeartbeatService, nil, nil, suite.AliasService, nil, suite.LanguageMappingService, suite.ProjectLabelService, nil, nil, suite.ApiKeyService, nil, suite.WebauthnService)
 	suite.LoginHandler = NewLoginHandler(suite.UserService, nil, nil, suite.WebauthnService)
 	Init() // load templates
 

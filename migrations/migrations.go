@@ -34,11 +34,10 @@ func GetMigrationFunc(cfg *config.Config) GormMigrationFunc {
 			if err := db.AutoMigrate(&models.User{}); err != nil && !cfg.Db.AutoMigrateFailSilently {
 				return err
 			}
-<<<<<<< HEAD
 			if err := db.AutoMigrate(&models.ScmAccount{}, &models.ScmRepository{}, &models.ProjectRepositoryLink{}, &models.ScmCommit{}, &models.CommitStat{}, &models.CodexTaskSession{}); err != nil && !cfg.Db.AutoMigrateFailSilently {
-=======
+				return err
+			}
 			if err := db.AutoMigrate(&models.WebAuthnCredential{}); err != nil && !cfg.Db.AutoMigrateFailSilently {
->>>>>>> upstream/master
 				return err
 			}
 			if err := db.AutoMigrate(&models.KeyStringValue{}); err != nil && !cfg.Db.AutoMigrateFailSilently {

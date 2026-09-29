@@ -21,26 +21,17 @@ import (
 type ProjectsHandler struct {
 	userSrvc      services.IUserService
 	heartbeatSrvc services.IHeartbeatService
-<<<<<<< HEAD
 	commitSrvc    services.ICommitService
-}
-
-func NewProjectsHandler(userService services.IUserService, heartbeatsService services.IHeartbeatService, commitService services.ICommitService) *ProjectsHandler {
-	return &ProjectsHandler{
-		userSrvc:      userService,
-		heartbeatSrvc: heartbeatsService,
-		commitSrvc:    commitService,
-=======
 	projectSrvc   services.IProjectService
 	config        *conf.Config
 }
 
-func NewProjectsHandler(userService services.IUserService, heartbeatsService services.IHeartbeatService, projectService services.IProjectService) *ProjectsHandler {
+func NewProjectsHandler(userService services.IUserService, heartbeatsService services.IHeartbeatService, projectService services.IProjectService, commitService services.ICommitService) *ProjectsHandler {
 	return &ProjectsHandler{
 		userSrvc:      userService,
 		heartbeatSrvc: heartbeatsService,
 		projectSrvc:   projectService,
->>>>>>> upstream/master
+		commitSrvc:    commitService,
 		config:        conf.Get(),
 	}
 }

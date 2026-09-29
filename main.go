@@ -68,16 +68,13 @@ var (
 	metricsRepository         *repositories.MetricsRepository
 	durationRepository        *repositories.DurationRepository
 	apiKeyRepository          repositories.IApiKeyRepository
-<<<<<<< HEAD
 	scmAccountRepository      repositories.IScmAccountRepository
 	scmRepositoryRepository   repositories.IScmRepositoryRepository
 	projectRepoLinkRepository repositories.IProjectRepositoryLinkRepository
 	scmCommitRepository       repositories.IScmCommitRepository
 	commitStatRepository      repositories.ICommitStatRepository
 	codexTaskRepository       *repositories.CodexTaskSessionRepository
-=======
 	webAuthnRepository        repositories.IWebAuthnRepository
->>>>>>> upstream/master
 )
 
 var (
@@ -99,12 +96,9 @@ var (
 	housekeepingService    services.IHousekeepingService
 	miscService            services.IMiscService
 	apiKeyService          services.IApiKeyService
-<<<<<<< HEAD
 	commitService          services.ICommitService
 	codexTaskService       services.ICodexTaskService
-=======
 	webAuthnService        services.IWebAuthnService
->>>>>>> upstream/master
 )
 
 // TODO: Refactor entire project to be structured after business domains
@@ -195,16 +189,13 @@ func main() {
 	metricsRepository = repositories.NewMetricsRepository(db)
 	durationRepository = repositories.NewDurationRepository(db)
 	apiKeyRepository = repositories.NewApiKeyRepository(db)
-<<<<<<< HEAD
 	scmAccountRepository = repositories.NewScmAccountRepository(db)
 	scmRepositoryRepository = repositories.NewScmRepositoryRepository(db)
 	projectRepoLinkRepository = repositories.NewProjectRepositoryLinkRepository(db)
 	scmCommitRepository = repositories.NewScmCommitRepository(db)
 	commitStatRepository = repositories.NewCommitStatRepository(db)
 	codexTaskRepository = repositories.NewCodexTaskSessionRepository(db)
-=======
 	webAuthnRepository = repositories.NewWebAuthnRepository(db)
->>>>>>> upstream/master
 
 	// Services
 	mailService = mail.NewMailService()
@@ -224,12 +215,9 @@ func main() {
 	diagnosticsService = services.NewDiagnosticsService(diagnosticsRepository)
 	housekeepingService = services.NewHousekeepingService(userService, heartbeatService, projectService, summaryService, aliasRepository) // can pass any repo here
 	miscService = services.NewMiscService(userService, heartbeatService, summaryService, keyValueService, mailService)
-<<<<<<< HEAD
 	commitService = services.NewCommitService(scmAccountRepository, scmRepositoryRepository, projectRepoLinkRepository, scmCommitRepository, commitStatRepository, userService, heartbeatService, durationService)
 	codexTaskService = services.NewCodexTaskService(codexTaskRepository)
-=======
 	webAuthnService = services.NewWebAuthnService(webAuthnRepository)
->>>>>>> upstream/master
 
 	if config.App.LeaderboardEnabled {
 		leaderboardService = services.NewLeaderboardService(leaderboardRepository, summaryService, userService)
@@ -269,11 +257,7 @@ func main() {
 	wakatimeV1SummariesHandler := wtV1Routes.NewSummariesHandler(userService, summaryService)
 	wakatimeV1StatsHandler := wtV1Routes.NewStatsHandler(userService, summaryService)
 	wakatimeV1UsersHandler := wtV1Routes.NewUsersHandler(userService, heartbeatService)
-<<<<<<< HEAD
-	wakatimeV1ProjectsHandler := wtV1Routes.NewProjectsHandler(userService, heartbeatService, commitService)
-=======
-	wakatimeV1ProjectsHandler := wtV1Routes.NewProjectsHandler(userService, heartbeatService, projectService)
->>>>>>> upstream/master
+	wakatimeV1ProjectsHandler := wtV1Routes.NewProjectsHandler(userService, heartbeatService, projectService, commitService)
 	wakatimeV1HeartbeatsHandler := wtV1Routes.NewHeartbeatHandler(userService, heartbeatService)
 	wakatimeV1LeadersHandler := wtV1Routes.NewLeadersHandler(userService, leaderboardService)
 	wakatimeV1UserAgentsHandler := wtV1Routes.NewUserAgentsHandler(userService, heartbeatService)
@@ -281,13 +265,8 @@ func main() {
 	shieldV1BadgeHandler := shieldsV1Routes.NewBadgeHandler(summaryService, userService)
 
 	// MVC Handlers
-<<<<<<< HEAD
 	summaryHandler := routes.NewSummaryHandler(summaryService, userService, heartbeatService, durationService, aliasService, commitService)
-	settingsHandler := routes.NewSettingsHandler(userService, heartbeatService, durationService, summaryService, aliasService, aggregationService, languageMappingService, projectLabelService, keyValueService, mailService, apiKeyService, commitService)
-=======
-	summaryHandler := routes.NewSummaryHandler(summaryService, userService, heartbeatService, durationService, aliasService)
-	settingsHandler := routes.NewSettingsHandler(userService, heartbeatService, durationService, summaryService, aliasService, aggregationService, languageMappingService, projectLabelService, keyValueService, mailService, apiKeyService, webAuthnService)
->>>>>>> upstream/master
+	settingsHandler := routes.NewSettingsHandler(userService, heartbeatService, durationService, summaryService, aliasService, aggregationService, languageMappingService, projectLabelService, keyValueService, mailService, apiKeyService, commitService, webAuthnService)
 	subscriptionHandler := routes.NewSubscriptionHandler(userService, mailService, keyValueService)
 	projectsHandler := routes.NewProjectsHandler(userService, heartbeatService, projectService)
 	homeHandler := routes.NewHomeHandler(userService, keyValueService)

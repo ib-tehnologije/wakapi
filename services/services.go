@@ -191,7 +191,6 @@ type IApiKeyService interface {
 	Delete(*models.ApiKey) error
 }
 
-<<<<<<< HEAD
 type ICommitService interface {
 	LinkProject(*models.User, string, string, string, string) (*models.ProjectRepositoryLink, error)
 	LinkProjectWithRepo(*models.User, string, string, string) (*models.ProjectRepositoryLink, error)
@@ -209,7 +208,8 @@ type ICommitService interface {
 	SyncNow(*models.User, string) error
 	SyncByID(*models.User, string) error
 	Schedule()
-=======
+}
+
 type IWebAuthnService interface {
 	CreateCredential(*webauthn.Credential, *models.User, string) (*models.WebAuthnCredential, error)
 	GetCredentialsByUser(*models.User) ([]*models.WebAuthnCredential, error)
@@ -217,5 +217,4 @@ type IWebAuthnService interface {
 	LoadCredentialIntoUser(*models.User) error
 	DeleteCredential(*models.WebAuthnCredential) error
 	UpdateCredential(*webauthn.Credential) error
->>>>>>> upstream/master
 }

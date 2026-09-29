@@ -45,11 +45,8 @@ type SettingsHandler struct {
 	keyValueSrvc        services.IKeyValueService
 	mailSrvc            services.IMailService
 	apiKeySrvc          services.IApiKeyService
-<<<<<<< HEAD
 	commitSrvc          services.ICommitService
-=======
 	WebAuthnSrvc        services.IWebAuthnService
->>>>>>> upstream/master
 	httpClient          *http.Client
 	aggregationLocks    map[string]bool
 }
@@ -79,11 +76,8 @@ func NewSettingsHandler(
 	keyValueService services.IKeyValueService,
 	mailService services.IMailService,
 	apiKeyService services.IApiKeyService,
-<<<<<<< HEAD
 	commitService services.ICommitService,
-=======
 	webAuthnService services.IWebAuthnService,
->>>>>>> upstream/master
 ) *SettingsHandler {
 	return &SettingsHandler{
 		config:              conf.Get(),
@@ -98,11 +92,8 @@ func NewSettingsHandler(
 		keyValueSrvc:        keyValueService,
 		mailSrvc:            mailService,
 		apiKeySrvc:          apiKeyService,
-<<<<<<< HEAD
 		commitSrvc:          commitService,
-=======
 		WebAuthnSrvc:        webAuthnService,
->>>>>>> upstream/master
 		httpClient:          &http.Client{Timeout: 10 * time.Second},
 		aggregationLocks:    make(map[string]bool),
 	}
@@ -225,7 +216,6 @@ func (h *SettingsHandler) dispatchAction(action string) action {
 		return h.actionAddApiKey
 	case "delete_api_key":
 		return h.actionDeleteApiKey
-<<<<<<< HEAD
 	case "link_github_project":
 		return h.actionLinkGithubProject
 	case "update_github_link":
@@ -234,12 +224,10 @@ func (h *SettingsHandler) dispatchAction(action string) action {
 		return h.actionUnlinkGithubProject
 	case "sync_github_project":
 		return h.actionSyncGithubProject
-=======
 	case "webauthn_add":
 		return h.actionWebAuthnAdd
 	case "webauthn_delete":
 		return h.actionWebAuthnDelete
->>>>>>> upstream/master
 	}
 	return nil
 }
@@ -1361,26 +1349,7 @@ func (h *SettingsHandler) buildViewModel(r *http.Request, w http.ResponseWriter,
 		})
 	}
 
-<<<<<<< HEAD
-	vm := &view.SettingsViewModel{
-		SharedLoggedInViewModel: view.SharedLoggedInViewModel{
-			SharedViewModel: view.NewSharedViewModel(h.config, nil),
-			User:            user,
-		},
-		LanguageMappings:    mappings,
-		Aliases:             combinedAliases,
-		Labels:              combinedLabels,
-		Projects:            projects,
-		UserFirstData:       firstData,
-		SubscriptionPrice:   subscriptionPrice,
-		SupportContact:      h.config.App.SupportContact,
-		DataRetentionMonths: h.config.App.DataRetentionMonths,
-		InviteLink:          inviteLink,
-		ApiKeys:             combinedApiKeys,
-		GitHubLinks:         githubLinks,
-		GitHubPatStored:     githubPatStored,
-=======
-	if h.WebAuthnSrvc.LoadCredentialIntoUser(user) != nil {
+	if err := h.WebAuthnSrvc.LoadCredentialIntoUser(user); err != nil {
 		conf.Log().Request(r).Error("error while loading webauthn credentials into user", "user", user.ID, "error", err)
 		return &view.SettingsViewModel{
 			SharedLoggedInViewModel: view.SharedLoggedInViewModel{
@@ -1388,7 +1357,6 @@ func (h *SettingsHandler) buildViewModel(r *http.Request, w http.ResponseWriter,
 				User:            user,
 			},
 		}
->>>>>>> upstream/master
 	}
 
 	// readme card params
@@ -1412,6 +1380,8 @@ func (h *SettingsHandler) buildViewModel(r *http.Request, w http.ResponseWriter,
 		DataRetentionMonths:   h.config.App.DataRetentionMonths,
 		InviteLink:            inviteLink,
 		ApiKeys:               combinedApiKeys,
+		GitHubLinks:           githubLinks,
+		GitHubPatStored:       githubPatStored,
 		WebAuthnCredentials:   user.Credentials,
 		ReadmeCardCustomTitle: readmeCardTitle,
 		DisableWebAuthn:       h.config.Security.DisableWebAuthn,

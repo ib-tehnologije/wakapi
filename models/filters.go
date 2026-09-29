@@ -210,14 +210,10 @@ func (f *Filters) MatchHeartbeat(h *Heartbeat) bool {
 		(f.Language == nil || f.Language.MatchAny(h.Language)) &&
 		(f.Editor == nil || f.Editor.MatchAny(h.Editor)) &&
 		(f.Machine == nil || f.Machine.MatchAny(h.Machine)) &&
-<<<<<<< HEAD
 		(f.Branch == nil || f.Branch.MatchAny(h.Branch)) &&
 		(f.Entity == nil || f.Entity.MatchAny(h.Entity)) &&
-		(f.Category == nil || f.Category.MatchAny(h.Category))
-=======
 		(f.Category == nil || f.Category.MatchAny(h.Category)) &&
 		(f.AIModel == nil || f.AIModel.MatchAny(h.AIModel))
->>>>>>> upstream/master
 }
 
 func (f *Filters) MatchDuration(d *Duration) bool {
@@ -226,14 +222,10 @@ func (f *Filters) MatchDuration(d *Duration) bool {
 		(f.Language == nil || f.Language.MatchAny(d.Language)) &&
 		(f.Editor == nil || f.Editor.MatchAny(d.Editor)) &&
 		(f.Machine == nil || f.Machine.MatchAny(d.Machine)) &&
-<<<<<<< HEAD
 		(f.Branch == nil || f.Branch.MatchAny(d.Branch)) &&
 		(f.Entity == nil || f.Entity.MatchAny(d.Entity)) &&
-		(f.Category == nil || f.Category.MatchAny(d.Category))
-=======
 		(f.Category == nil || f.Category.MatchAny(d.Category)) &&
 		(f.AIModel == nil || f.AIModel.MatchAny(d.AIModel))
->>>>>>> upstream/master
 }
 
 // WithAliases adds OR-conditions for every alias of a Filter key as additional Filter keys

@@ -90,13 +90,8 @@ func (suite *FiltersTestSuite) TestFilters_IsEmpty() {
 
 func (suite *FiltersTestSuite) TestFilters_Match() {
 	heartbeats := []*Heartbeat{
-<<<<<<< HEAD
-		{Project: "wakapi", Language: "Go", Branch: "main", Entity: "services/heartbeat.go", Category: "coding"},
-		{Project: "anchr", Language: "Javascript", Branch: "feature", Entity: "app.ts", Category: "debugging"},
-=======
-		{Project: "wakapi", Language: "Go", AIModel: "claude-3-5-sonnet"},
-		{Project: "anchr", Language: "Javascript", AIModel: "gpt-4o"},
->>>>>>> upstream/master
+		{Project: "wakapi", Language: "Go", Branch: "main", Entity: "services/heartbeat.go", Category: "coding", AIModel: "claude-3-5-sonnet"},
+		{Project: "anchr", Language: "Javascript", Branch: "feature", Entity: "app.ts", Category: "debugging", AIModel: "gpt-4o"},
 	}
 
 	sut1 := NewFiltersWith(SummaryProject, "wakapi")
@@ -115,7 +110,6 @@ func (suite *FiltersTestSuite) TestFilters_Match() {
 	assert.True(suite.T(), sut4.MatchHeartbeat(heartbeats[0]))
 	assert.True(suite.T(), sut4.MatchHeartbeat(heartbeats[1]))
 
-<<<<<<< HEAD
 	sut5 := NewFiltersWith(SummaryProject, "wakapi").With(SummaryBranch, "main")
 	assert.True(suite.T(), sut5.MatchHeartbeat(heartbeats[0]))
 	assert.False(suite.T(), sut5.MatchHeartbeat(heartbeats[1]))
@@ -126,6 +120,10 @@ func (suite *FiltersTestSuite) TestFilters_Match() {
 	sut7 := NewFiltersWith(SummaryEntity, "services/heartbeat.go").With(SummaryCategory, "coding")
 	assert.True(suite.T(), sut7.MatchHeartbeat(heartbeats[0]))
 	assert.False(suite.T(), sut7.MatchHeartbeat(heartbeats[1]))
+
+	sut8 := NewFiltersWith(SummaryAiModel, "claude-3-5-sonnet")
+	assert.True(suite.T(), sut8.MatchHeartbeat(heartbeats[0]))
+	assert.False(suite.T(), sut8.MatchHeartbeat(heartbeats[1]))
 }
 
 func (suite *FiltersTestSuite) TestFilters_MatchDuration_HonorsBranchEntityAndCategory() {
@@ -143,11 +141,6 @@ func (suite *FiltersTestSuite) TestFilters_MatchDuration_HonorsBranchEntityAndCa
 	assert.False(suite.T(), NewFiltersWith(SummaryEntity, "services/heartbeat.go").MatchDuration(duration))
 	assert.True(suite.T(), NewFiltersWith(SummaryCategory, "coding").MatchDuration(duration))
 	assert.False(suite.T(), NewFiltersWith(SummaryCategory, "debugging").MatchDuration(duration))
-=======
-	sut5 := NewFiltersWith(SummaryAiModel, "claude-3-5-sonnet")
-	assert.True(suite.T(), sut5.MatchHeartbeat(heartbeats[0]))
-	assert.False(suite.T(), sut5.MatchHeartbeat(heartbeats[1]))
->>>>>>> upstream/master
 }
 
 func (suite *FiltersTestSuite) TestFilters_One() {

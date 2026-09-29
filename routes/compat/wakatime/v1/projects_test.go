@@ -41,7 +41,8 @@ func TestProjectsHandler_HasRepoFlag(t *testing.T) {
 	}
 
 	hb := &mocks.HeartbeatServiceMock{}
-	hb.On("GetUserProjectStats", user, mock.Anything, mock.Anything, (*utils.PageParams)(nil), false).Return(stats, nil)
+	ps := &mocks.ProjectServiceMock{}
+	ps.On("GetUserProjectStats", user, mock.Anything, mock.Anything, "", (*utils.PageParams)(nil), false).Return(stats, nil)
 
 	cs := &listLinksCommitService{
 		stubCommitService: &stubCommitService{},
@@ -53,6 +54,7 @@ func TestProjectsHandler_HasRepoFlag(t *testing.T) {
 	handler := NewProjectsHandler(
 		&mockUserService{user: user},
 		hb,
+		ps,
 		cs,
 	)
 
