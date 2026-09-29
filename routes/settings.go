@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/duke-git/lancet/v2/condition"
 	datastructure "github.com/duke-git/lancet/v2/datastructure/set"
 	"github.com/go-chi/chi/v5"
-	"github.com/gofrs/uuid/v5"
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/gorilla/schema"
 
 	conf "github.com/muety/wakapi/config"
@@ -42,7 +45,11 @@ type SettingsHandler struct {
 	keyValueSrvc        services.IKeyValueService
 	mailSrvc            services.IMailService
 	apiKeySrvc          services.IApiKeyService
+<<<<<<< HEAD
 	commitSrvc          services.ICommitService
+=======
+	WebAuthnSrvc        services.IWebAuthnService
+>>>>>>> upstream/master
 	httpClient          *http.Client
 	aggregationLocks    map[string]bool
 }
@@ -72,7 +79,11 @@ func NewSettingsHandler(
 	keyValueService services.IKeyValueService,
 	mailService services.IMailService,
 	apiKeyService services.IApiKeyService,
+<<<<<<< HEAD
 	commitService services.ICommitService,
+=======
+	webAuthnService services.IWebAuthnService,
+>>>>>>> upstream/master
 ) *SettingsHandler {
 	return &SettingsHandler{
 		config:              conf.Get(),
@@ -87,7 +98,11 @@ func NewSettingsHandler(
 		keyValueSrvc:        keyValueService,
 		mailSrvc:            mailService,
 		apiKeySrvc:          apiKeyService,
+<<<<<<< HEAD
 		commitSrvc:          commitService,
+=======
+		WebAuthnSrvc:        webAuthnService,
+>>>>>>> upstream/master
 		httpClient:          &http.Client{Timeout: 10 * time.Second},
 		aggregationLocks:    make(map[string]bool),
 	}
@@ -96,11 +111,12 @@ func NewSettingsHandler(
 func (h *SettingsHandler) RegisterRoutes(router chi.Router) {
 	r := chi.NewRouter()
 	r.Use(
-		middlewares.NewAuthenticateMiddleware(h.userSrvc).
+		middlewares.NewWebAuthenticateMiddleware(h.userSrvc).
 			WithRedirectTarget(defaultErrorRedirectTarget()).
 			WithRedirectErrorMessage("unauthorized").Handler,
 	)
 	r.Get("/", h.GetIndex)
+	r.Get("/webauthn/options", h.GetWebAuthnOptions)
 	r.Post("/", h.PostIndex)
 
 	router.Mount("/settings", r)
@@ -209,6 +225,7 @@ func (h *SettingsHandler) dispatchAction(action string) action {
 		return h.actionAddApiKey
 	case "delete_api_key":
 		return h.actionDeleteApiKey
+<<<<<<< HEAD
 	case "link_github_project":
 		return h.actionLinkGithubProject
 	case "update_github_link":
@@ -217,8 +234,47 @@ func (h *SettingsHandler) dispatchAction(action string) action {
 		return h.actionUnlinkGithubProject
 	case "sync_github_project":
 		return h.actionSyncGithubProject
+=======
+	case "webauthn_add":
+		return h.actionWebAuthnAdd
+	case "webauthn_delete":
+		return h.actionWebAuthnDelete
+>>>>>>> upstream/master
 	}
 	return nil
+}
+
+func (h *SettingsHandler) GetWebAuthnOptions(w http.ResponseWriter, r *http.Request) {
+	if h.config.IsDev() {
+		loadTemplates()
+	}
+	user := middlewares.GetPrincipal(r)
+	if user.AuthType != "local" {
+		routeutils.RespondJSONError(w, http.StatusBadRequest, "webauthn is only available for local users")
+		return
+	}
+
+	if err := h.WebAuthnSrvc.LoadCredentialIntoUser(user); err != nil {
+		conf.Log().Request(r).Error("error while loading webauthn credentials", "error", err)
+		routeutils.RespondJSONError(w, http.StatusInternalServerError, "error while loading webauthn credentials")
+		return
+	}
+
+	webAuthnOptions, session, err := conf.WebAuthn.BeginRegistration(user, webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
+		RequireResidentKey: protocol.ResidentKeyRequired(), // for usernameless login
+	}))
+	if err != nil {
+		conf.Log().Request(r).Error("error while getting webauthn registration options", "error", err)
+		routeutils.RespondJSONError(w, http.StatusInternalServerError, "error while getting webauthn registration options")
+		return
+	}
+
+	if err = routeutils.SetWebAuthnSession(session, r, w); err != nil {
+		conf.Log().Request(r).Error("error while setting webauthn session", "error", err)
+		routeutils.RespondJSONError(w, http.StatusInternalServerError, "error while getting webauthn registration options")
+		return
+	}
+	routeutils.RespondJSON(w, http.StatusOK, webAuthnOptions)
 }
 
 func (h *SettingsHandler) actionUpdateUser(w http.ResponseWriter, r *http.Request) actionResult {
@@ -298,16 +354,6 @@ func (h *SettingsHandler) actionChangePassword(w http.ResponseWriter, r *http.Re
 		return actionResult{http.StatusInternalServerError, "", conf.ErrInternalServerError, nil}
 	}
 
-	login := &models.Login{
-		Username: user.ID,
-		Password: user.Password,
-	}
-	encoded, err := h.config.Security.SecureCookie.Encode(models.AuthCookieKey, login.Username)
-	if err != nil {
-		return actionResult{http.StatusInternalServerError, "", conf.ErrInternalServerError, nil}
-	}
-
-	http.SetCookie(w, h.config.CreateCookie(models.AuthCookieKey, encoded))
 	return actionResult{http.StatusOK, "password was updated successfully", "", nil}
 }
 
@@ -328,6 +374,12 @@ func (h *SettingsHandler) actionChangeUserId(w http.ResponseWriter, r *http.Requ
 
 	if _, err := h.userSrvc.ChangeUserId(user, newUserId); err != nil {
 		return actionResult{http.StatusInternalServerError, "", conf.ErrInternalServerError, nil}
+	}
+
+	oidcProviders := h.config.Security.ListOidcProviders()
+	if slices.Contains(oidcProviders, user.AuthType) {
+		// OIDC Users will remain authenticated, just return ok
+		return actionResult{http.StatusOK, fmt.Sprintf("Successfully changed your username to %s", newUserId), "", nil}
 	}
 
 	routeutils.SetSuccess(r, w, fmt.Sprintf("Successfully changed your username to %s, please log back in.", newUserId))
@@ -738,7 +790,7 @@ func (h *SettingsHandler) actionSetWakatimeApiKey(w http.ResponseWriter, r *http
 	}
 
 	// Healthcheck, if a new API key is set, i.e. the feature is activated
-	if (user.WakatimeApiKey == "" && apiKey != "") && !h.validateWakatimeKey(apiKey, apiUrl) {
+	if (user.WakatimeApiKey == "" && apiKey != "") && (!h.validateWakatimeUrl(apiUrl) || !h.validateWakatimeKey(apiKey, apiUrl)) {
 		return actionResult{http.StatusBadRequest, "", "failed to connect to WakaTime, API key or endpoint URL invalid?", nil}
 	}
 
@@ -767,6 +819,11 @@ func (h *SettingsHandler) actionImportWakatime(w http.ResponseWriter, r *http.Re
 	kvKeyLastImport := fmt.Sprintf("%s_%s", conf.KeyLastImport, user.ID)
 	kvKeyLastImportSuccess := fmt.Sprintf("%s_%s", conf.KeyLastImportSuccess, user.ID)
 
+	importer := imports.NewWakatimeImporter(user.WakatimeApiKey, useLegacyImporter)
+	if err := importer.Validate(user); err != nil {
+		return actionResult{http.StatusForbidden, "", fmt.Sprintf("Failed to import – %v", err), nil}
+	}
+
 	if !h.config.IsDev() {
 		lastImport, _ := time.Parse(time.RFC822, h.keyValueSrvc.MustGetString(kvKeyLastImport).Value)
 		if time.Now().Sub(lastImport) < time.Duration(h.config.App.ImportBackoffMin)*time.Minute {
@@ -789,9 +846,8 @@ func (h *SettingsHandler) actionImportWakatime(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	go func(user *models.User, r *http.Request) {
+	go func(user *models.User, importer *imports.WakatimeImporter, r *http.Request) {
 		start := time.Now()
-		importer := imports.NewWakatimeImporter(user.WakatimeApiKey, useLegacyImporter)
 
 		countBefore, _ := h.heartbeatSrvc.CountByUser(user)
 
@@ -857,7 +913,7 @@ func (h *SettingsHandler) actionImportWakatime(w http.ResponseWriter, r *http.Re
 				slog.Info("sent import notification mail", "userID", user.ID)
 			}
 		}
-	}(user, r)
+	}(user, importer, r)
 
 	h.keyValueSrvc.PutString(&models.KeyStringValue{
 		Key:   kvKeyLastImport,
@@ -945,7 +1001,7 @@ func (h *SettingsHandler) actionGenerateInvite(w http.ResponseWriter, r *http.Re
 	}
 
 	user := middlewares.GetPrincipal(r)
-	inviteCode := uuid.Must(uuid.NewV4()).String()[0:8]
+	inviteCode := uuid.NewV4().String()[0:8]
 
 	if err := h.keyValueSrvc.PutString(&models.KeyStringValue{
 		Key:   fmt.Sprintf("%s_%s", conf.KeyInviteCode, inviteCode),
@@ -962,6 +1018,10 @@ func (h *SettingsHandler) actionGenerateInvite(w http.ResponseWriter, r *http.Re
 			valueInviteCode: inviteCode,
 		},
 	}
+}
+
+func (h *SettingsHandler) validateWakatimeUrl(baseUrl string) bool {
+	return routeutils.ValidateWakatimeUrl(baseUrl) == nil
 }
 
 func (h *SettingsHandler) validateWakatimeKey(apiKey string, baseUrl string) bool {
@@ -1015,7 +1075,7 @@ func (h *SettingsHandler) actionAddApiKey(w http.ResponseWriter, r *http.Request
 		loadTemplates()
 	}
 
-	apiKey := uuid.Must(uuid.NewV4()).String()
+	apiKey := uuid.NewV4().String()
 
 	if _, err := h.apiKeySrvc.Create(&models.ApiKey{
 		User:     middlewares.GetPrincipal(r),
@@ -1056,6 +1116,85 @@ func (h *SettingsHandler) actionDeleteApiKey(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	return actionResult{http.StatusNotFound, "", "API key not found", nil}
+}
+
+func (h *SettingsHandler) actionWebAuthnAdd(w http.ResponseWriter, r *http.Request) actionResult {
+	if h.config.IsDev() {
+		loadTemplates()
+	}
+
+	if h.config.Security.DisableWebAuthn {
+		return actionResult{http.StatusForbidden, "", "webauthn is disabled on this server", nil}
+	}
+
+	user := middlewares.GetPrincipal(r)
+	if user.AuthType != "local" {
+		return actionResult{http.StatusBadRequest, "", "cannot add webauthn authenticator for non-local user", nil}
+	}
+
+	if err := h.WebAuthnSrvc.LoadCredentialIntoUser(user); err != nil {
+		conf.Log().Request(r).Error("could not load webauthn credentials for user", "error", err)
+		return actionResult{http.StatusInternalServerError, "", "could not load webauthn credentials for user", nil}
+	}
+	authenticatorName := strings.TrimSpace(r.PostFormValue("authenticator_name"))
+	if authenticatorName == "" {
+		return actionResult{http.StatusBadRequest, "", "authenticator name must not be empty", nil}
+	}
+
+	for _, c := range user.Credentials {
+		if c.Name == authenticatorName {
+			return actionResult{http.StatusBadRequest, "", "authenticator name already in use", nil}
+		}
+	}
+
+	credentialJSON := r.PostFormValue("credential_json")
+	sessionData, err := routeutils.GetWebAuthnSession(r)
+	if err != nil {
+		return actionResult{http.StatusBadRequest, "", "could not get webauthn session data", nil}
+	}
+	// why not use FinishRegistration here?
+	// that's because the credentialJSON is not all the request data, but only part of it
+	pcc, err := protocol.ParseCredentialCreationResponseBytes([]byte(credentialJSON))
+	if err != nil {
+		conf.Log().Request(r).Error("error while parsing webauthn register response", "error", err.Error())
+		return actionResult{http.StatusBadRequest, "", "could not parse credential creation response", nil}
+	}
+	credential, err := conf.WebAuthn.CreateCredential(user, *sessionData, pcc)
+	if err != nil {
+		conf.Log().Request(r).Error("error while processing webauthn register", "error", err.Error())
+		return actionResult{http.StatusBadRequest, "", "could not create webauthn credential", nil}
+	}
+	_, err = h.WebAuthnSrvc.CreateCredential(credential, user, authenticatorName)
+	if err != nil {
+		return actionResult{http.StatusInternalServerError, "", "could not store webauthn credential", nil}
+	}
+
+	return actionResult{http.StatusOK, "webauthn authenticator added successfully", "", nil}
+}
+
+func (h *SettingsHandler) actionWebAuthnDelete(w http.ResponseWriter, r *http.Request) actionResult {
+	if h.config.IsDev() {
+		loadTemplates()
+	}
+
+	if h.config.Security.DisableWebAuthn {
+		return actionResult{http.StatusForbidden, "", "webauthn is disabled on this server", nil}
+	}
+
+	user := middlewares.GetPrincipal(r)
+	if user.AuthType != "local" {
+		return actionResult{http.StatusBadRequest, "", "cannot delete webauthn authenticator for non-local user", nil}
+	}
+
+	credentialName := r.PostFormValue("credential_name")
+	credential, err := h.WebAuthnSrvc.GetCredentialByUserAndName(user, credentialName)
+	if err != nil || credential == nil {
+		return actionResult{http.StatusNotFound, "", "webauthn credential not found", nil}
+	}
+	if err := h.WebAuthnSrvc.DeleteCredential(credential); err != nil {
+		return actionResult{http.StatusInternalServerError, "", "could not delete webauthn credential", nil}
+	}
+	return actionResult{http.StatusOK, "webauthn authenticator deleted successfully", "", nil}
 }
 
 func (h *SettingsHandler) buildViewModel(r *http.Request, w http.ResponseWriter, args *map[string]interface{}) *view.SettingsViewModel {
@@ -1222,6 +1361,7 @@ func (h *SettingsHandler) buildViewModel(r *http.Request, w http.ResponseWriter,
 		})
 	}
 
+<<<<<<< HEAD
 	vm := &view.SettingsViewModel{
 		SharedLoggedInViewModel: view.SharedLoggedInViewModel{
 			SharedViewModel: view.NewSharedViewModel(h.config, nil),
@@ -1239,6 +1379,16 @@ func (h *SettingsHandler) buildViewModel(r *http.Request, w http.ResponseWriter,
 		ApiKeys:             combinedApiKeys,
 		GitHubLinks:         githubLinks,
 		GitHubPatStored:     githubPatStored,
+=======
+	if h.WebAuthnSrvc.LoadCredentialIntoUser(user) != nil {
+		conf.Log().Request(r).Error("error while loading webauthn credentials into user", "user", user.ID, "error", err)
+		return &view.SettingsViewModel{
+			SharedLoggedInViewModel: view.SharedLoggedInViewModel{
+				SharedViewModel: view.NewSharedViewModel(h.config, &view.Messages{Error: criticalError}),
+				User:            user,
+			},
+		}
+>>>>>>> upstream/master
 	}
 
 	// readme card params
@@ -1246,7 +1396,26 @@ func (h *SettingsHandler) buildViewModel(r *http.Request, w http.ResponseWriter,
 	if err, maxRange := helpers.ResolveMaximumRange(user.ShareDataMaxDays); err == nil {
 		readmeCardTitle += fmt.Sprintf(" (%v)", maxRange.GetHumanReadable())
 	}
-	vm.ReadmeCardCustomTitle = readmeCardTitle
+
+	vm := &view.SettingsViewModel{
+		SharedLoggedInViewModel: view.SharedLoggedInViewModel{
+			SharedViewModel: view.NewSharedViewModel(h.config, nil),
+			User:            user,
+		},
+		LanguageMappings:      mappings,
+		Aliases:               combinedAliases,
+		Labels:                combinedLabels,
+		Projects:              projects,
+		UserFirstData:         firstData,
+		SubscriptionPrice:     subscriptionPrice,
+		SupportContact:        h.config.App.SupportContact,
+		DataRetentionMonths:   h.config.App.DataRetentionMonths,
+		InviteLink:            inviteLink,
+		ApiKeys:               combinedApiKeys,
+		WebAuthnCredentials:   user.Credentials,
+		ReadmeCardCustomTitle: readmeCardTitle,
+		DisableWebAuthn:       h.config.Security.DisableWebAuthn,
+	}
 
 	return routeutils.WithSessionMessages(vm, r, w)
 }

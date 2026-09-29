@@ -8,6 +8,7 @@ server:
   listen_ipv6: ::1                    # set to '-' to disable ipv6
   listen_socket:                      # set to '-' to disable unix sockets
   listen_socket_mode: 0666            # permission mode to create unix socket with
+  log_format: text                    # format for structured logging (text or json)
   timeout_sec: 30                     # request timeout
   tls_cert_path:                      # leave blank to not use https
   tls_key_path:                       # leave blank to not use https
@@ -29,6 +30,7 @@ app:
   import_backoff_min: 5                                     # time (in minutes) for "cooldown" before allowing another data import attempt by a user
   import_max_rate: 24                                       # minimum hours to pass after a successful data import by a user before attempting a new one
   import_batch_size: 50                                     # maximum number of heartbeats to insert into the database within one transaction
+  import_hosts_whitelist: []                                # list of whitelisted hostnames for data import (wildcards allowed, empty list means allow all)
   heartbeat_max_age: '4320h'                                # maximum acceptable age of a heartbeat (see https://pkg.go.dev/time#ParseDuration)
   data_retention_months: -1                                 # maximum retention period on months for user data (heartbeats) (-1 for infinity)
   max_inactive_months: 12                                   # maximum months of inactivity before deleting user accounts
@@ -83,11 +85,14 @@ db:
 
 security:
   password_salt:                        # change this
+  cookie_key:                           # optional, base64-encoded custom key used derive session and authentication keys
   insecure_cookies: true                # should be set to 'false', except when not running with HTTPS (e.g. on localhost)
   cookie_max_age: 172800
   allow_signup: true                    # whether to allow new user creation at all
   oidc_allow_signup: true               # allow registration of new users from oidc
+  oidc_insecure: false                   # skip tls certificate validation for oidc provider
   disable_local_auth: false             # disable login via local credentials (username and password) to enforce OIDC provider login
+  disable_webauthn: true                # disable login via webauthn (security keys, biometrics, etc.)
   signup_captcha: false
   invite_codes: true                    # whether to enable invite codes for overriding disabled signups
   disable_frontpage: false
@@ -100,7 +105,7 @@ security:
   signup_max_rate: 5/1h                     # signup endpoint rate limit pattern
   login_max_rate: 10/1m                     # login endpoint rate limit pattern
   password_reset_max_rate: 5/1h             # password reset endpoint rate limit pattern
-  oidc:                                     # list of openid connect providers available for user signup and login, see https://github.com/muety/wakapi/wiki/OpenID-Connect-login-(SSO)
+  oidc:                                     # list of openid connect providers available for user signup and login, see https://github.com/muety/wakapi/wiki/OpenID-Connect-login-(SSO) (provider names are case-insensitive)
 
 sentry:
   dsn:                                # leave blank to disable sentry integration

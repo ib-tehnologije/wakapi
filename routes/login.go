@@ -12,7 +12,10 @@ import (
 	"github.com/duke-git/lancet/v2/random"
 	"github.com/duke-git/lancet/v2/slice"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httprate"
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 	conf "github.com/muety/wakapi/config"
 	"github.com/muety/wakapi/middlewares"
 	"github.com/muety/wakapi/models"
@@ -29,36 +32,58 @@ type LoginHandler struct {
 	userSrvc     services.IUserService
 	mailSrvc     services.IMailService
 	keyValueSrvc services.IKeyValueService
+	webAuthnSrvc services.IWebAuthnService
 }
 
-func NewLoginHandler(userService services.IUserService, mailService services.IMailService, keyValueService services.IKeyValueService) *LoginHandler {
+func NewLoginHandler(userService services.IUserService, mailService services.IMailService, keyValueService services.IKeyValueService, webAuthnService services.IWebAuthnService) *LoginHandler {
 	return &LoginHandler{
 		config:       conf.Get(),
 		userSrvc:     userService,
 		mailSrvc:     mailService,
 		keyValueSrvc: keyValueService,
+		webAuthnSrvc: webAuthnService,
 	}
 }
 
 func (h *LoginHandler) RegisterRoutes(router chi.Router) {
 	router.Get("/login", h.GetIndex)
+
+	loginLimit, loginWindow := h.config.Security.GetLoginMaxRate()
 	router.
-		With(httprate.LimitByRealIP(h.config.Security.GetLoginMaxRate())).
+		With(httprate.LimitBy(loginLimit, loginWindow, func(r *http.Request) (string, error) {
+			return httprate.CanonicalizeIP(middleware.GetClientIP(r.Context())), nil
+		})).
 		Post("/login", h.PostLogin)
+
 	router.Get("/signup", h.GetSignup)
+
+	signupLimit, signupWindow := h.config.Security.GetSignupMaxRate()
 	router.
-		With(httprate.LimitByRealIP(h.config.Security.GetSignupMaxRate())).
+		With(httprate.LimitBy(signupLimit, signupWindow, func(r *http.Request) (string, error) {
+			return httprate.CanonicalizeIP(middleware.GetClientIP(r.Context())), nil
+		})).
 		Post("/signup", h.PostSignup)
+
 	router.Get("/set-password", h.GetSetPassword)
 	router.Post("/set-password", h.PostSetPassword)
+
 	router.Get("/reset-password", h.GetResetPassword)
+
+	resetLimit, resetWindow := h.config.Security.GetPasswordResetMaxRate()
 	router.
-		With(httprate.LimitByRealIP(h.config.Security.GetPasswordResetMaxRate())).
+		With(httprate.LimitBy(resetLimit, resetWindow, func(r *http.Request) (string, error) {
+			return httprate.CanonicalizeIP(middleware.GetClientIP(r.Context())), nil
+		})).
 		Post("/reset-password", h.PostResetPassword)
 	router.Get("/oidc/{provider}/login", h.GetOidcLogin)
 	router.Get("/oidc/{provider}/callback", h.GetOidcCallback)
 
-	authMiddleware := middlewares.NewAuthenticateMiddleware(h.userSrvc).
+	if !h.config.Security.DisableWebAuthn {
+		router.Get("/webauthn/options", h.GetWebAuthnOptions)
+		router.Post("/webauthn/login", h.PostLoginWebAuthn)
+	}
+
+	authMiddleware := middlewares.NewWebAuthenticateMiddleware(h.userSrvc).
 		WithRedirectTarget(defaultErrorRedirectTarget()).
 		WithRedirectErrorMessage("unauthorized").
 		WithOptionalFor("/logout")
@@ -135,7 +160,7 @@ func (h *LoginHandler) PostLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.finishUserLogin(user, r, w)
+	h.finishUserLogin(user, r, w, true)
 	http.Redirect(w, r, fmt.Sprintf("%s/summary", h.config.Server.BasePath), http.StatusFound)
 }
 
@@ -147,9 +172,18 @@ func (h *LoginHandler) PostLogout(w http.ResponseWriter, r *http.Request) {
 	if user := middlewares.GetPrincipal(r); user != nil {
 		h.userSrvc.FlushUserCache(user.ID)
 	}
+<<<<<<< HEAD
 	routeutils.ClearSession(r, w)                                    // clear all session data
 	http.SetCookie(w, h.config.GetClearCookie(models.AuthCookieKey)) // clear auth token
 	http.Redirect(w, r, fmt.Sprintf("%s/", strings.TrimSuffix(h.config.Server.BasePathOrRoot(), "/")), http.StatusFound)
+=======
+	routeutils.ClearSession(r, w)                                                // clear all session data
+	http.SetCookie(w, h.config.GetClearCookie(models.AuthCookieKey))             // clear auth token
+	http.SetCookie(w, h.config.GetClearCookie(models.OidcIdTokenCookieKey))      // clear oidc id token
+	http.SetCookie(w, h.config.GetClearCookie(models.OidcRefreshTokenCookieKey)) // clear oidc refresh token
+	http.SetCookie(w, h.config.GetClearCookie(models.OidcProviderCookieKey))     // clear oidc provider cookie
+	http.Redirect(w, r, fmt.Sprintf("%s/", h.config.Server.BasePath), http.StatusFound)
+>>>>>>> upstream/master
 }
 
 func (h *LoginHandler) GetSignup(w http.ResponseWriter, r *http.Request) {
@@ -405,9 +439,6 @@ func (h *LoginHandler) GetOidcCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 
-	// clear any existing id token on the session, just because
-	routeutils.ClearOidcIdTokenPayload(r, w)
-
 	// validate oauth state param
 	savedState := routeutils.GetOidcState(r)
 	if state == "" || savedState != state {
@@ -420,7 +451,7 @@ func (h *LoginHandler) GetOidcCallback(w http.ResponseWriter, r *http.Request) {
 	routeutils.ClearOidcState(r, w)
 
 	// exchange auth code for access token and id token
-	authToken, err := provider.OAuth2.Exchange(r.Context(), code)
+	authToken, err := provider.OAuth2.Exchange(conf.GetOidcContext(r.Context()), code)
 	if err != nil {
 		errMsg := "failed to exchange authorization code for access token"
 		conf.Log().Request(r).Error(errMsg, "provider", provider.Name)
@@ -440,7 +471,7 @@ func (h *LoginHandler) GetOidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// verify id token
-	idTokenPayload, err := routeutils.DecodeOidcIdToken(rawIdToken, provider, r.Context())
+	idTokenPayload, err := routeutils.DecodeOidcIdToken(rawIdToken, provider, conf.GetOidcContext(r.Context()))
 	if err != nil || idTokenPayload == nil {
 		errMsg := "failed to verify and decode id_token"
 		conf.Log().Request(r).Error(errMsg, "provider", provider.Name, "id_token", rawIdToken) // save to log, because does not grant any access
@@ -487,8 +518,111 @@ func (h *LoginHandler) GetOidcCallback(w http.ResponseWriter, r *http.Request) {
 		user = newUser
 	}
 
-	routeutils.SetOidcIdTokenPayload(idTokenPayload, r, w) // save to session, only used by middleware for automatic redirection upon expiry
-	h.finishUserLogin(user, r, w)
+	http.SetCookie(w, h.config.CreateCookie(models.OidcIdTokenCookieKey, rawIdToken))
+	if authToken.RefreshToken != "" {
+		http.SetCookie(w, h.config.CreateCookie(models.OidcRefreshTokenCookieKey, authToken.RefreshToken))
+	}
+	http.SetCookie(w, h.config.CreateCookie(models.OidcProviderCookieKey, provider.Name))
+
+	h.finishUserLogin(user, r, w, false)
+	http.Redirect(w, r, fmt.Sprintf("%s/summary", h.config.Server.BasePath), http.StatusFound)
+}
+
+func (h *LoginHandler) GetWebAuthnOptions(w http.ResponseWriter, r *http.Request) {
+	if h.config.Security.DisableWebAuthn {
+		w.WriteHeader(http.StatusForbidden)
+		templates[conf.LoginTemplate].Execute(w, h.buildViewModel(r, w, false).WithError("webauthn is disabled on this server"))
+		return
+	}
+
+	options, sessionData, err := conf.WebAuthn.BeginDiscoverableLogin()
+	if err != nil {
+		conf.Log().Request(r).Error("failed to begin webauthn login", "error", err)
+		routeutils.RespondJSONError(w, http.StatusInternalServerError, "failed to begin login")
+		return
+	}
+	if routeutils.SetWebAuthnSession(sessionData, r, w) != nil {
+		routeutils.RespondJSONError(w, http.StatusInternalServerError, "failed to set session")
+		return
+	}
+	routeutils.RespondJSON(w, http.StatusOK, options)
+}
+
+func (h *LoginHandler) PostLoginWebAuthn(w http.ResponseWriter, r *http.Request) {
+	if h.config.IsDev() {
+		loadTemplates()
+	}
+
+	if h.config.Security.DisableWebAuthn {
+		w.WriteHeader(http.StatusForbidden)
+		templates[conf.LoginTemplate].Execute(w, h.buildViewModel(r, w, false).WithError("webauthn authentication is disabled on this server"))
+		return
+	}
+
+	assertionJson := r.FormValue("assertion_json")
+	if assertionJson == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		templates[conf.LoginTemplate].Execute(w, h.buildViewModel(r, w, false).WithError("missing assertion"))
+		return
+	}
+
+	sessionData, err := routeutils.GetWebAuthnSession(r)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		templates[conf.LoginTemplate].Execute(w, h.buildViewModel(r, w, false).WithError("session expired"))
+		return
+	}
+
+	par, err := protocol.ParseCredentialRequestResponseBytes([]byte(assertionJson))
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		templates[conf.LoginTemplate].Execute(w, h.buildViewModel(r, w, false).WithError("invalid assertion format"))
+		return
+	}
+	userHandler := func(rawID, userHandle []byte) (webauthn.User, error) {
+		userHandleStr := string(userHandle)
+		user, err := h.userSrvc.GetUserByWebAuthnID(userHandleStr)
+		if err != nil || user == nil {
+			return nil, fmt.Errorf("no user found for webauthn id: %s", userHandleStr)
+		}
+
+		if err := h.webAuthnSrvc.LoadCredentialIntoUser(user); err != nil {
+			return nil, fmt.Errorf("failed to load credential for webauthn id %s: %w", userHandleStr, err)
+		}
+
+		return user, nil
+	}
+	userInterface, credential, err := conf.WebAuthn.ValidatePasskeyLogin(userHandler, *sessionData, par)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		conf.Log().Request(r).Error("webauthn login validation failed", "error", err)
+		templates[conf.LoginTemplate].Execute(w, h.buildViewModel(r, w, false).WithError("authentication failed"))
+		return
+	}
+
+	user := userInterface.(*models.User)
+
+	if credential.Authenticator.CloneWarning {
+		// TODO: may block login?
+		// log clone warning, but allow login
+		conf.Log().Request(r).Warn("possible cloned authenticator detected during webauthn login", "userID", user.ID, "credentialID", credential.ID)
+	}
+
+	if user.AuthType != "local" {
+		w.WriteHeader(http.StatusUnauthorized)
+		templates[conf.LoginTemplate].Execute(w, h.buildViewModel(r, w, false).WithError("non-local user cannot be authenticated with webauthn"))
+		return
+	}
+
+	err = h.webAuthnSrvc.UpdateCredential(credential)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		conf.Log().Request(r).Error("failed to update webauthn credential after login", "userID", user.ID, "error", err)
+		templates[conf.LoginTemplate].Execute(w, h.buildViewModel(r, w, false).WithError("internal server error"))
+		return
+	}
+
+	h.finishUserLogin(user, r, w, true)
 	http.Redirect(w, r, fmt.Sprintf("%s/summary", h.config.Server.BasePath), http.StatusFound)
 }
 
@@ -501,6 +635,7 @@ func (h *LoginHandler) buildViewModel(r *http.Request, w http.ResponseWriter, wi
 		AllowSignup:      h.config.IsDev() || h.config.Security.AllowSignup,
 		InviteCode:       r.URL.Query().Get("invite"),
 		DisableLocalAuth: h.config.Security.DisableLocalAuth,
+		DisableWebAuthn:  h.config.Security.DisableWebAuthn,
 		OidcProviders: slice.Map(h.config.Security.ListOidcProviders(), func(i int, providerName string) view.LoginViewModelOidcProvider {
 			provider, _ := conf.GetOidcProvider(providerName) // no error, because only using registered provider names
 			return view.LoginViewModelOidcProvider{
@@ -528,19 +663,20 @@ func (h *LoginHandler) getOidcProvider(w http.ResponseWriter, r *http.Request) *
 	return provider
 }
 
-func (h *LoginHandler) finishUserLogin(user *models.User, r *http.Request, w http.ResponseWriter) {
-	encoded, err := h.config.Security.SecureCookie.Encode(models.AuthCookieKey, user.ID)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		conf.Log().Request(r).Error("failed to encode secure cookie", "error", err)
-		templates[conf.LoginTemplate].Execute(w, h.buildViewModel(r, w, false).WithError("internal server error"))
-		return
+func (h *LoginHandler) finishUserLogin(user *models.User, r *http.Request, w http.ResponseWriter, setAuthCookie bool) {
+	if setAuthCookie {
+		cookie, err := routeutils.CreateAuthCookie(user.ID)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			conf.Log().Request(r).Error("failed to encode secure cookie", "error", err)
+			templates[conf.LoginTemplate].Execute(w, h.buildViewModel(r, w, false).WithError("internal server error"))
+			return
+		}
+		http.SetCookie(w, cookie)
 	}
 
 	user.LastLoggedInAt = models.CustomTime(time.Now())
 	h.userSrvc.Update(user)
-
-	http.SetCookie(w, h.config.CreateCookie(models.AuthCookieKey, encoded))
 }
 
 func (h *LoginHandler) coalesceExistingUser(username string) string {

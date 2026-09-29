@@ -85,7 +85,7 @@ func (suite *UserServiceTestSuite) TestUserService_GetByKeyFromCache_Success() {
 	userCached := &models.User{ID: TestUserID, ApiKey: "cached-key"}
 
 	userCache := cache.New(cache.NoExpiration, cache.NoExpiration)
-	userCache.SetDefault(TestAPIKey, userCached)
+	userCache.SetDefault("key_"+TestAPIKey+"_false", userCached)
 
 	sut := &UserService{cache: userCache}
 
@@ -132,4 +132,58 @@ func (suite *UserServiceTestSuite) TestUserService_GetByKeyFromAdditionalApiKeys
 	suite.Nil(result)
 	suite.NotNil(err)
 	suite.Equal(err, errors.New("not found"))
+}
+
+func (suite *UserServiceTestSuite) TestUserService_GetUserByKey_DoesNotHitUserByIdCache() {
+	sut := NewUserService(suite.KeyValueService, suite.MailService, suite.ApiKeyService, suite.UserRepo)
+
+	suite.UserRepo.On("FindOne", models.User{ID: TestUserID}).Return(suite.TestUser, nil)
+	suite.UserRepo.On("FindOne", models.User{ApiKey: TestUserID}).Return(nil, errors.New("user not found"))
+	suite.ApiKeyService.On("GetByApiKey", TestUserID, false).Return(nil, errors.New("key not found"))
+
+	// 1. Prime cache by looking up user by ID (username)
+	userByID, err := sut.GetUserById(TestUserID)
+	suite.Nil(err)
+	suite.Equal(suite.TestUser, userByID)
+
+	// 2. Attempt to look up user by API key passing username as key
+	userByKey, err := sut.GetUserByKey(TestUserID, false)
+	suite.Nil(userByKey)
+	suite.NotNil(err)
+}
+
+func (suite *UserServiceTestSuite) TestUserService_GetUserByKey_DoesNotCacheUnderUsername() {
+	sut := NewUserService(suite.KeyValueService, suite.MailService, suite.ApiKeyService, suite.UserRepo)
+
+	suite.UserRepo.On("FindOne", models.User{ApiKey: TestAPIKey}).Return(suite.TestUser, nil)
+	suite.UserRepo.On("FindOne", models.User{ApiKey: TestUserID}).Return(nil, errors.New("user not found"))
+	suite.ApiKeyService.On("GetByApiKey", TestUserID, false).Return(nil, errors.New("key not found"))
+
+	// 1. Look up user by valid API key
+	userByKeyValid, err := sut.GetUserByKey(TestAPIKey, false)
+	suite.Nil(err)
+	suite.Equal(suite.TestUser, userByKeyValid)
+
+	// 2. Attempt to look up user by API key using username as key
+	userByKeyInvalid, err := sut.GetUserByKey(TestUserID, false)
+	suite.Nil(userByKeyInvalid)
+	suite.NotNil(err)
+}
+
+func (suite *UserServiceTestSuite) TestUserService_GetUserByKey_ReadOnlyKeyCacheDoesNotGrantFullAccess() {
+	sut := NewUserService(suite.KeyValueService, suite.MailService, suite.ApiKeyService, suite.UserRepo)
+
+	suite.UserRepo.On("FindOne", models.User{ApiKey: TestAPIKey}).Return(nil, errors.New("not primary key"))
+	suite.ApiKeyService.On("GetByApiKey", TestAPIKey, false).Return(&models.ApiKey{User: suite.TestUser, ReadOnly: true}, nil)
+	suite.ApiKeyService.On("GetByApiKey", TestAPIKey, true).Return(nil, errors.New("key is read-only"))
+
+	// 1. Look up with requireFullAccessKey = false (should cache under read-only key)
+	userReadOnly, err := sut.GetUserByKey(TestAPIKey, false)
+	suite.Nil(err)
+	suite.Equal(suite.TestUser, userReadOnly)
+
+	// 2. Look up with requireFullAccessKey = true (must not hit read-only cache)
+	userFullAccess, err := sut.GetUserByKey(TestAPIKey, true)
+	suite.Nil(userFullAccess)
+	suite.NotNil(err)
 }

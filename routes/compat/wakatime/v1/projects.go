@@ -19,9 +19,9 @@ import (
 )
 
 type ProjectsHandler struct {
-	config        *conf.Config
 	userSrvc      services.IUserService
 	heartbeatSrvc services.IHeartbeatService
+<<<<<<< HEAD
 	commitSrvc    services.ICommitService
 }
 
@@ -30,13 +30,24 @@ func NewProjectsHandler(userService services.IUserService, heartbeatsService ser
 		userSrvc:      userService,
 		heartbeatSrvc: heartbeatsService,
 		commitSrvc:    commitService,
+=======
+	projectSrvc   services.IProjectService
+	config        *conf.Config
+}
+
+func NewProjectsHandler(userService services.IUserService, heartbeatsService services.IHeartbeatService, projectService services.IProjectService) *ProjectsHandler {
+	return &ProjectsHandler{
+		userSrvc:      userService,
+		heartbeatSrvc: heartbeatsService,
+		projectSrvc:   projectService,
+>>>>>>> upstream/master
 		config:        conf.Get(),
 	}
 }
 
 func (h *ProjectsHandler) RegisterRoutes(router chi.Router) {
 	router.Group(func(r chi.Router) {
-		r.Use(middlewares.NewAuthenticateMiddleware(h.userSrvc).Handler)
+		r.Use(middlewares.NewApiAuthenticateMiddleware(h.userSrvc).Handler)
 		r.Get("/compat/wakatime/v1/users/{user}/projects", h.Get)
 		r.Get("/compat/wakatime/v1/users/{user}/projects/{id}", h.GetOne)
 	})
@@ -105,7 +116,7 @@ func (h *ProjectsHandler) GetOne(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ProjectsHandler) loadProjects(user *models.User, q string, exact bool) ([]*v1.Project, error) {
-	results, err := h.heartbeatSrvc.GetUserProjectStats(user, time.Time{}, utils.BeginOfToday(time.Local), nil, false)
+	results, err := h.projectSrvc.GetUserProjectStats(user, time.Time{}, utils.BeginOfToday(time.Local), "", nil, false)
 	if err != nil {
 		return nil, err
 	}

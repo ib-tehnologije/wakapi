@@ -98,10 +98,10 @@ func mapHeartbeat(
 	ua := userAgents[entry.UserAgentId]
 	if ua == nil {
 		// try to parse id as an actual user agent string (as returned by wakapi)
-		if opSys, editor, err := utils.ParseUserAgent(entry.UserAgentId); err == nil {
+		if parsed, err := utils.ParseUserAgent(entry.UserAgentId); err == nil {
 			ua = &wakatime.UserAgentEntry{
-				Editor: editor,
-				Os:     opSys,
+				Editor: parsed.Editor,
+				Os:     parsed.OS,
 			}
 		} else {
 			ua = &wakatime.UserAgentEntry{
@@ -130,6 +130,7 @@ func mapHeartbeat(
 		Language:        entry.Language,
 		IsWrite:         entry.IsWrite,
 		Editor:          ua.Editor,
+		AIModel:         ua.AIModel,
 		OperatingSystem: ua.Os,
 		Machine:         ma.Value,
 		UserAgent:       ua.Value,

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/duke-git/lancet/v2/condition"
-	conf "github.com/muety/wakapi/config"
 	"github.com/muety/wakapi/models"
 	"github.com/muety/wakapi/utils"
 	"gorm.io/gorm"
@@ -95,7 +94,7 @@ func (r *UserRepository) GetByLastActiveAfter(t time.Time) ([]*models.User, erro
 	if err := r.db.
 		Select(utils.QuoteSql(r.db, "user as %s", "id")).
 		Table("(?) as q", subQuery1).
-		Where("time >= ?", t.Local()).
+		Where("time >= ?", models.CustomTime(t.Local())).
 		Scan(&userIds).Error; err != nil {
 		return nil, err
 	}
@@ -114,12 +113,11 @@ func (r *UserRepository) Count() (int64, error) {
 }
 
 func (r *UserRepository) InsertOrGet(user *models.User) (*models.User, bool, error) {
+	// no need to replace "" with nil for nullable string columns, because they'll have "default:null" set
+	// this hacky replacement is only needed for updates
+
 	if u, err := r.FindOne(models.User{ID: user.ID}); err == nil && u != nil && u.ID != "" {
 		return u, false, nil
-	}
-
-	if err := r.ensureUniqueEmail(user); err != nil {
-		return nil, false, err
 	}
 
 	result := r.db.Create(user)
@@ -131,14 +129,14 @@ func (r *UserRepository) InsertOrGet(user *models.User) (*models.User, bool, err
 }
 
 func (r *UserRepository) Update(user *models.User) (*models.User, error) {
-	if err := r.ensureUniqueEmail(user); err != nil {
-		return nil, err
-	}
+	// for string columns with a unique index we must ensure null is used instead of empty string
+	// proper way would be to use *string or sql.NullString member type, we're doing it the hacky way though
+	// see https://stackoverflow.com/a/54699204/3112139
 
 	updateMap := map[string]interface{}{
 		"api_key":                  user.ApiKey,
 		"password":                 user.Password,
-		"email":                    user.Email,
+		"email":                    condition.Ternary[bool, interface{}](user.Email == "", nil, user.Email),
 		"last_logged_in_at":        user.LastLoggedInAt,
 		"share_data_max_days":      user.ShareDataMaxDays,
 		"share_editors":            user.ShareEditors,
@@ -164,6 +162,9 @@ func (r *UserRepository) Update(user *models.User) (*models.User, error) {
 		"exclude_unknown_projects": user.ExcludeUnknownProjects,
 		"heartbeats_timeout_sec":   user.HeartbeatsTimeoutSec,
 		"readme_stats_base_url":    user.ReadmeStatsBaseUrl,
+		"auth_type":                user.AuthType,
+		"sub":                      condition.Ternary[bool, interface{}](user.Sub == "", nil, user.Sub),
+		"webauthn_id":              user.WebauthnID,
 	}
 
 	result := r.db.Model(user).Updates(updateMap)
@@ -175,8 +176,15 @@ func (r *UserRepository) Update(user *models.User) (*models.User, error) {
 }
 
 func (r *UserRepository) UpdateField(user *models.User, key string, value interface{}) (*models.User, error) {
-	if err := r.ensureUniqueEmail(user); err != nil {
-		return nil, err
+	// for string columns with a unique index we must ensure null is used instead of empty string
+	// proper way would be to use *string or sql.NullString member type, we're doing it the hacky way though
+	// see https://stackoverflow.com/a/54699204/3112139
+
+	if strVal, ok := value.(string); ok && key == "email" && strVal == "" {
+		value = nil
+	}
+	if strVal, ok := value.(string); ok && key == "sub" && strVal == "" {
+		value = nil
 	}
 
 	result := r.db.Model(user).Update(key, value)
@@ -201,35 +209,11 @@ func (r *UserRepository) DeleteTx(user *models.User, tx *gorm.DB) error {
 
 func (r *UserRepository) getByLoggedIn(t time.Time, after bool) ([]*models.User, error) {
 	var users []*models.User
-	comparator := condition.TernaryOperator[bool, string](after, ">=", "<=")
+	comparator := condition.Ternary[bool, string](after, ">=", "<=")
 	if err := r.db.
 		Where(fmt.Sprintf("last_logged_in_at %s ?", comparator), t.Local()).
 		Find(&users).Error; err != nil {
 		return nil, err
 	}
 	return users, nil
-}
-
-func (r *UserRepository) ensureUniqueEmail(user *models.User) error {
-	// Dirty workaround: emails must be unique if set, but optional to be defined in the first place.
-	// Proper way to implement this is to simply make the idx_user_email index unique.
-	// However, given the current user schema, "email" is a string field, whose empty value is an empty string and while duplicate NULL values are allowed by a unique index, "" values aren't.
-	// As a workaround, we implement application-side checking of this constraint, which is not ideal.
-	// In the future, we might instead refactor the user model to use *string or sql.NullString as a type and then make the index unique.
-
-	var matches []*models.User
-	if user.Email == "" {
-		return nil
-	}
-	if err := r.db.Where(&models.User{Email: user.Email}).Find(&matches).Error; err != nil {
-		return err
-	}
-	if len(matches) > 1 {
-		conf.Log().Error("illegal state: more than 1 users exist with same email address", "email", user.Email)
-		return errors.New("email address already in use")
-	}
-	if len(matches) > 0 && matches[0].ID != user.ID {
-		return errors.New("email address already in use")
-	}
-	return nil
 }

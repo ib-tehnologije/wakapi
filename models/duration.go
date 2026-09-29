@@ -9,16 +9,15 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/gohugoio/hashstructure"
-	"github.com/muety/wakapi/models/lib"
 )
 
 // TODO: support multiple durations per time per user for different heartbeat timeouts
 // see discussion at https://github.com/muety/wakapi/issues/675
 type Duration struct {
-	ID     int64  `json:"-" gorm:"primaryKey; autoIncrement"` // https://github.com/muety/wakapi/issues/777
+	ID     int64  `json:"-" gorm:"primaryKey; autoIncrement"`                                             // https://github.com/muety/wakapi/issues/777
+	User   *User  `json:"-" gorm:"not null; constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" hash:"ignore"` // this foreign key constraint will not exist on sqlite, see 20260925_drop_orphaned_durations.go
 	UserID string `json:"user_id" gorm:"not null; index:idx_time_duration_user"`
-	// note: on sqlite, table will have an additional column `time_real`, introduced "manually" by migration 20260111
-	// see https://github.com/muety/wakapi/issues/882 for details
+	// Note: on sqlite, the time column is stored as INTEGER (Unix epoch milliseconds) rather than TEXT, see https://github.com/muety/wakapi/issues/882 for details
 	Time            CustomTime    `json:"time" hash:"ignore" gorm:"not null; index:idx_time_duration; index:idx_time_duration_user"` // time of first heartbeat of this duration
 	Duration        time.Duration `json:"duration" hash:"ignore" gorm:"not null"`
 	Project         string        `json:"project"`
@@ -27,8 +26,10 @@ type Duration struct {
 	OperatingSystem string        `json:"operating_system"`
 	Machine         string        `json:"machine"`
 	Category        string        `json:"category"`
+	AIModel         string        `json:"ai_model"`
 	Branch          string        `json:"branch"`
 	Entity          string        `json:"Entity"`
+	Extension       string        `json:"-"`
 	NumHeartbeats   int           `json:"-" hash:"ignore"`
 	GroupHash       string        `json:"-" hash:"ignore" gorm:"type:varchar(17)"`
 	Timeout         time.Duration `json:"-" gorm:"not null; default:600000000000"` // heartbeat timeout preference, see DefaultHeartbeatsTimeout
@@ -61,6 +62,20 @@ func NewDurationFromHeartbeat(h *Heartbeat) *Duration {
 		interval = h.User.HeartbeatsTimeout()
 	}
 
+	filename := h.Entity
+	if i := strings.LastIndexAny(filename, "/\\"); i != -1 {
+		filename = filename[i+1:]
+	}
+
+	var extension string
+	entityParts := strings.Split(filename, ".")
+	if len(entityParts) > 1 {
+		// up to two parts at max (e.g. "blade.php", "sql.gz", ...)
+		// we exclude the first part (the actual filename) unless it's the only part after the dot
+		start := max(len(entityParts)-2, 1)
+		extension = strings.Join(entityParts[start:], ".")
+	}
+
 	d := &Duration{
 		UserID:          h.UserID,
 		Time:            h.Time,
@@ -71,8 +86,10 @@ func NewDurationFromHeartbeat(h *Heartbeat) *Duration {
 		OperatingSystem: h.OperatingSystem,
 		Machine:         h.Machine,
 		Category:        h.Category,
+		AIModel:         h.AIModel,
 		Branch:          h.Branch,
 		Entity:          h.Entity,
+		Extension:       extension,
 		NumHeartbeats:   1,
 		Timeout:         interval,
 	}
@@ -99,13 +116,14 @@ func (d *Duration) Hashed() *Duration {
 }
 
 func (d *Duration) Augmented(languageMappings map[string]string) *Duration {
+	maxPrec := -1
 	for ext, targetLang := range languageMappings {
-		langs, ok := lib.LanguagesByExtension["."+ext]
-		if !ok {
-			continue
-		}
-		if lang := langs[0]; strings.ToLower(d.Language) == strings.ToLower(lang) {
+		// Using HasSuffix with leading dots to ensure we match the full extension and not just a partial string.
+		// e.g., a mapping for 'js' should match 'app.js' (extension 'js') but also 'app.test.js' (extension 'test.js').
+		// By checking against "." + d.Extension, we ensure we are comparing against the start of an extension segment.
+		if ok, prec := strings.HasSuffix("."+d.Extension, "."+ext), strings.Count(ext, "."); ok && prec > maxPrec {
 			d.Language = targetLang
+			maxPrec = prec
 		}
 	}
 	return d
@@ -129,6 +147,8 @@ func (d *Duration) GetKey(t uint8) (key string) {
 		key = d.Entity
 	case SummaryCategory:
 		key = d.Category
+	case SummaryAiModel:
+		key = d.AIModel
 	}
 
 	if key == "" {

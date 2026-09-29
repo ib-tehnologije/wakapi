@@ -56,6 +56,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/glebarez/sqlite"
@@ -104,9 +105,6 @@ var cFlag *string
 func init() {
 	cfg = &config{}
 
-	wakapiConfig.Set(wakapiConfig.Empty())
-	wakapiConfig.Get().Db.Dialect = cfg.Source.Dialect // only required because of the "postgresTimezoneHack" in shared.go
-
 	if f := flag.Lookup("config"); f == nil {
 		cFlag = flag.String("config", "sqlite2mysql.yml", "config file location")
 	} else {
@@ -118,6 +116,11 @@ func init() {
 	if err := configor.New(&configor.Config{}).Load(cfg, mustConfigPath()); err != nil {
 		log.Fatalln("failed to read config", err)
 	}
+
+	wakapiConfig.Set(wakapiConfig.Empty())
+	// required because CustomTime.Value() (-> writing, thus target dialect) works differently on SQLite (CustomTime.Scan() (-> reading) is agnostic of the dialect)
+	// see https://github.com/muety/wakapi/issues/972
+	wakapiConfig.Get().Db.Dialect = wakapiConfig.ResolveDbDialect(cfg.Target.Dialect)
 
 	log.Printf("attempting to open %s source database\n", cfg.Source.Dialect)
 	if db, err := getDb(&cfg.Source); err != nil {
@@ -176,6 +179,9 @@ func main() {
 	projectLabelsSource := repositories.NewProjectLabelRepository(dbSource)
 	projectLabelsTarget := repositories.NewProjectLabelRepository(dbTarget)
 
+	webauthnSource := repositories.NewWebAuthnRepository(dbSource)
+	webauthnTarget := repositories.NewWebAuthnRepository(dbTarget)
+
 	var bar *progressbar.ProgressBar
 
 	getUsers := userSource.GetAll
@@ -194,6 +200,9 @@ func main() {
 		if data, err := keyValueSource.GetAll(); err == nil {
 			bar = progressbar.Default(int64(len(data)))
 			for _, e := range data {
+				if isMigrationMarker(e) {
+					continue
+				}
 				if err := keyValueTarget.PutString(e); err != nil {
 					log.Printf("warning: failed to insert key-value pair %s (%s)\n", e.Key, err)
 					continue
@@ -213,6 +222,17 @@ func main() {
 				log.Printf("warning: failed to insert user %s (%s)\n", e.ID, err)
 				continue
 			}
+
+			if data, err := webauthnSource.GetByUser(e.ID); err == nil {
+				for _, cred := range data {
+					if _, err := webauthnTarget.Insert(cred); err != nil {
+						log.Printf("warning: failed to insert webauthn credential %s for user %s (%s)\n", cred.ID, e.ID, err)
+					}
+				}
+			} else {
+				log.Printf("warning: failed to fetch webauthn credentials for user %s (%s)\n", e.ID, err)
+			}
+
 			bar.Add(1)
 		}
 	}
@@ -294,7 +314,7 @@ func main() {
 		log.Println("Migrating summaries ...")
 		bar = progressbar.Default(int64(len(users)))
 		for _, user := range users {
-			if data, err := summarySource.GetByUserWithin(user, time.Time{}, time.Now()); err == nil {
+			if data, err := summarySource.GetByUser(user); err == nil {
 				for _, e := range data {
 					id := e.ID
 					e.ID = 0
@@ -333,7 +353,7 @@ func main() {
 		log.Println("Migrating heartbeats ...")
 		bar = progressbar.Default(int64(len(users)))
 		for _, user := range users {
-			if data, err := heartbeatSource.StreamWithinBatched(time.Time{}, time.Now(), user, InsertBatchSize); err == nil {
+			if data, err := heartbeatSource.StreamByUserBatched(user, InsertBatchSize); err == nil {
 				for heartbeats := range data {
 					fixHeartbeatsBatched(heartbeats)
 					if err := heartbeatTarget.InsertBatch(heartbeats); err != nil {
@@ -401,6 +421,9 @@ func createSchema() error {
 	if err := dbTarget.AutoMigrate(&models.User{}); err != nil {
 		return err
 	}
+	if err := dbTarget.AutoMigrate(&models.WebAuthnCredential{}); err != nil {
+		return err
+	}
 	if err := dbTarget.AutoMigrate(&models.KeyStringValue{}); err != nil {
 		return err
 	}
@@ -449,4 +472,10 @@ func mustConfigPath() string {
 		log.Fatalln("failed to find config file at", *cFlag)
 	}
 	return *cFlag
+}
+
+var migrationMarkerRe = regexp.MustCompile(`^\d{8,9}-\w+$`)
+
+func isMigrationMarker(kv *models.KeyStringValue) bool {
+	return migrationMarkerRe.MatchString(kv.Key) && kv.Value == "done"
 }

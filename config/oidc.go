@@ -2,42 +2,46 @@ package config
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"strings"
-	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 )
 
 type OidcProvider struct {
-	Name        string
-	DisplayName string
-	OAuth2      *oauth2.Config
-	Verifier    *oidc.IDTokenVerifier
+	Name          string
+	DisplayName   string
+	UsernameClaim string
+	OAuth2        *oauth2.Config
+	Verifier      *oidc.IDTokenVerifier
 }
 
 type IdTokenPayload struct {
-	Issuer            string `json:"iss"`
-	Subject           string `json:"sub"`
-	Expiry            int64  `json:"exp"`
-	Name              string `json:"name"`
-	Nickname          string `json:"nickname"`
-	PreferredUsername string `json:"preferred_username"`
-	Email             string `json:"email"`
-	EmailVerified     bool   `json:"email_verified"`
-	ProviderName      string `json:"provider_name"` // custom field, not part of actual id token response
-}
-
-func (token *IdTokenPayload) Exp() time.Time {
-	return time.Unix(token.Expiry, 0)
-}
-
-func (token *IdTokenPayload) IsValid() bool {
-	return token.Exp().After(time.Now())
+	Issuer            string         `json:"iss"`
+	Subject           string         `json:"sub"`
+	Expiry            int64          `json:"exp"`
+	Name              string         `json:"name"`
+	Nickname          string         `json:"nickname"`
+	PreferredUsername string         `json:"preferred_username"`
+	Email             string         `json:"email"`
+	EmailVerified     bool           `json:"email_verified"`
+	ProviderName      string         `json:"provider_name"` // custom field, not part of actual id token response
+	AllClaims         map[string]any `json:"-"`
+	UsernameClaim     string         `json:"-"`
 }
 
 func (token *IdTokenPayload) Username() string {
+	// Check custom claim first if configured
+	if token.UsernameClaim != "" {
+		if val := token.getClaimValue(token.UsernameClaim); val != "" {
+			return val
+		}
+	}
+	// Fall back to default behavior
 	// https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims
 	if s := strings.TrimSpace(token.PreferredUsername); s != "" {
 		return s
@@ -51,35 +55,70 @@ func (token *IdTokenPayload) Username() string {
 	return ""
 }
 
+func (token *IdTokenPayload) getClaimValue(claimName string) string {
+	if token.AllClaims != nil {
+		if val, ok := token.AllClaims[claimName]; ok {
+			if strVal, ok := val.(string); ok {
+				return strings.TrimSpace(strVal)
+			}
+		}
+	}
+	return ""
+}
+
 var oidcProviders = make(map[string]*OidcProvider)
+
+func GetOidcContext(ctx context.Context) context.Context {
+	tp := http.DefaultTransport.(*http.Transport).Clone()
+	tp.DisableCompression = true
+	tp.TLSClientConfig = &tls.Config{
+		InsecureSkipVerify: cfg.Security.OidcInsecure,
+	}
+	return oidc.ClientContext(ctx, &http.Client{
+		Transport: tp,
+	})
+}
 
 func RegisterOidcProvider(providerCfg *oidcProviderConfig) {
 	cfg := Get()
 
-	provider, err := oidc.NewProvider(context.Background(), providerCfg.Endpoint)
+	provider, err := oidc.NewProvider(GetOidcContext(context.Background()), providerCfg.Endpoint)
 	if err != nil {
 		Log().Fatal(fmt.Sprintf("failed to initialize oidc provider at %s", providerCfg.Endpoint), "error", err)
 		return
 	}
 
+	name := strings.ToLower(providerCfg.Name)
+	if _, ok := oidcProviders[name]; ok {
+		slog.Warn("duplicate oidc provider name after normalization, overwriting previous registration", "provider", name)
+	}
+
+	scopes := []string{oidc.ScopeOpenID, oidc.ScopeProfile, oidc.ScopeEmail}
+	for _, s := range providerCfg.Scopes {
+		if s != oidc.ScopeOpenID && s != oidc.ScopeProfile && s != oidc.ScopeEmail {
+			scopes = append(scopes, s)
+		}
+	}
+
 	oauth2Conf := oauth2.Config{
 		ClientID:     providerCfg.ClientID,
 		ClientSecret: providerCfg.ClientSecret,
-		RedirectURL:  fmt.Sprintf("%s/oidc/%s/callback", cfg.Server.GetPublicUrl(), providerCfg.Name),
+		RedirectURL:  fmt.Sprintf("%s/oidc/%s/callback", cfg.Server.GetPublicUrl(), name),
 		Endpoint:     provider.Endpoint(),
-		Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+		Scopes:       scopes,
 	}
 
-	oidcProviders[providerCfg.Name] = &OidcProvider{
-		Name:        providerCfg.Name,
-		DisplayName: providerCfg.String(),
-		OAuth2:      &oauth2Conf,
-		Verifier:    provider.Verifier(&oidc.Config{ClientID: providerCfg.ClientID}),
+	oidcProviders[name] = &OidcProvider{
+		Name:          name,
+		DisplayName:   providerCfg.String(),
+		UsernameClaim: providerCfg.UsernameClaim,
+		OAuth2:        &oauth2Conf,
+		Verifier:      provider.Verifier(&oidc.Config{ClientID: providerCfg.ClientID}),
 	}
 }
 
 func GetOidcProvider(name string) (*OidcProvider, error) {
-	provider, ok := oidcProviders[name]
+	provider, ok := oidcProviders[strings.ToLower(name)]
 	if !ok {
 		return nil, fmt.Errorf("oidc provider not found: %s", name)
 	}

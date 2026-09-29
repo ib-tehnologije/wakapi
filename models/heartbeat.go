@@ -12,25 +12,51 @@ import (
 	"github.com/gohugoio/hashstructure"
 )
 
+const (
+	// https://github.com/wakatime/wakatime-cli/blob/5fb9caaef329a697c196ab67747d7875b5749c8b/pkg/heartbeat/entity.go#L24-L29
+	HeartbeatTypeFile   = "file"
+	HeartbeatTypeDomain = "domain"
+	HeartbeatTypeUrl    = "url"
+	HeartbeatTypeEvent  = "event"
+	HeartbeatTypeApp    = "app"
+)
+
+const (
+	// https://github.com/wakatime/wakatime-cli/blob/5fb9caaef329a697c196ab67747d7875b5749c8b/pkg/heartbeat/category.go#L63-L84
+	HeartbeatCategoryAiCoding = "ai coding"
+)
+
+type HeartbeatExclusionFilter struct {
+	Type     string
+	Category string
+}
+
+// ExcludeFromDurations holds heartbeats which shall be excluded when aggregating durations, and thus won't contribute to any kind of statistics.
+// E.g. exclude heartbeats sent by AI coding agents to capture "thinking time", i.e. AI session activity without a file entity associated (see https://github.com/muety/wakapi/issues/964).
+var ExcludeFromDurations = []HeartbeatExclusionFilter{
+	{Type: HeartbeatTypeApp, Category: HeartbeatCategoryAiCoding},
+}
+
 type Heartbeat struct {
 	ID              uint64 `json:"-" gorm:"primary_key" hash:"ignore"`
 	User            *User  `json:"-" gorm:"not null; constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" hash:"ignore"`
-	UserID          string `json:"-" gorm:"not null; index:idx_time_user; index:idx_user_project"` // idx_user_project is for quickly fetching a user's project list (settings page)
+	UserID          string `json:"-" gorm:"not null; index:idx_time_user; index:idx_time_user_project_lang,priority:1; index:idx_user_project"` // idx_user_project is for quickly fetching a user's project list (settings page)
 	Entity          string `json:"entity" gorm:"not null"`
 	Type            string `json:"type" gorm:"size:255"`
 	Category        string `json:"category" gorm:"size:255"`
-	Project         string `json:"project" gorm:"index:idx_project; index:idx_user_project"`
+	Project         string `json:"project" gorm:"index:idx_project; index:idx_time_user_project_lang,priority:3; index:idx_user_project"`
 	Branch          string `json:"branch" gorm:"index:idx_branch"`
-	Language        string `json:"language" gorm:"index:idx_language"`
+	Language        string `json:"language" gorm:"index:idx_language; index:idx_time_user_project_lang,priority:4"`
 	IsWrite         bool   `json:"is_write"`
 	Editor          string `json:"editor" gorm:"index:idx_editor" hash:"ignore"`                     // ignored because editor might be parsed differently by wakatime
+	AIModel         string `json:"ai_model" gorm:"index:idx_ai_model" hash:"ignore"`                 // ignored because model might be parsed differently by wakatime
 	OperatingSystem string `json:"operating_system" gorm:"index:idx_operating_system" hash:"ignore"` // ignored because os might be parsed differently by wakatime
 	Machine         string `json:"machine" gorm:"index:idx_machine" hash:"ignore"`                   // ignored because wakatime api doesn't return machines currently
 	UserAgent       string `json:"user_agent" hash:"ignore" gorm:"type:varchar(255)"`
-	// note: on sqlite, table will have an additional column `time_real`, introduced "manually" by migration 20260111
+	// note: on sqlite, the time column is stored as INTEGER (Unix epoch milliseconds) rather than TEXT
 	// see https://github.com/muety/wakapi/issues/882 for details
-	Time             CustomTime `json:"time" gorm:"timeScale:3; index:idx_time; index:idx_time_user; not null" swaggertype:"primitive,number"`
-	Hash             string     `json:"-" gorm:"type:varchar(17); uniqueIndex"`
+	Time             CustomTime `json:"time" gorm:"timeScale:3; index:idx_time; index:idx_time_user; index:idx_time_user_project_lang,priority:2; not null" swaggertype:"primitive,number"`
+	Hash             string     `json:"-" hash:"ignore" gorm:"type:varchar(17); uniqueIndex"`
 	Origin           string     `json:"-" hash:"ignore" gorm:"type:varchar(255)"`
 	OriginId         string     `json:"-" hash:"ignore" gorm:"type:varchar(255)"`
 	CreatedAt        CustomTime `json:"created_at" gorm:"timeScale:3; not null" swaggertype:"primitive,number" hash:"ignore"` // https://gorm.io/docs/conventions.html#CreatedAt
@@ -40,6 +66,12 @@ type Heartbeat struct {
 	LineDeletions    int        `json:"line_deletions,omitempty" hash:"ignore"`
 	LineAdditions    int        `json:"line_additions,omitempty" hash:"ignore"`
 	ProjectRootCount int        `json:"project_root_count,omitempty" hash:"ignore"`
+	AILineChanges    int        `json:"ai_line_changes,omitempty" hash:"ignore"`
+	AISession        string     `json:"ai_session,omitempty" hash:"ignore"`
+	AIInputTokens    int        `json:"ai_input_tokens,omitempty" hash:"ignore"`
+	AIOutputTokens   int        `json:"ai_output_tokens,omitempty" hash:"ignore"`
+	AIPromptLength   int        `json:"ai_prompt_length,omitempty" hash:"ignore"`
+	HumanLineChanges int        `json:"human_line_changes,omitempty" hash:"ignore"`
 }
 
 func (h *Heartbeat) Valid() bool {
@@ -55,6 +87,7 @@ func (h *Heartbeat) Sanitize() *Heartbeat {
 	h.OperatingSystem = CanonicalName(h.OperatingSystem, SummaryOS)
 	h.Editor = CanonicalName(h.Editor, SummaryEditor)
 	h.Language = CanonicalName(h.Language, SummaryLanguage)
+	h.AIModel = CanonicalName(h.AIModel, SummaryAiModel)
 	if h.Category == "" {
 		if h.Type == "domain" || h.Type == "url" {
 			h.Category = "browsing"
@@ -94,6 +127,8 @@ func (h *Heartbeat) GetKey(t uint8) (key string) {
 		key = h.Entity
 	case SummaryCategory:
 		key = h.Category
+	case SummaryAiModel:
+		key = h.AIModel
 	}
 
 	if key == "" {
@@ -133,7 +168,7 @@ func (h *Heartbeat) ClearPlaceholders() {
 
 func (h *Heartbeat) String() string {
 	return fmt.Sprintf(
-		"Heartbeat {user=%s, Entity=%s, type=%s, category=%s, project=%s, branch=%s, language=%s, iswrite=%v, editor=%s, os=%s, machine=%s, time=%d}",
+		"Heartbeat {user=%s, Entity=%s, type=%s, category=%s, project=%s, branch=%s, language=%s, iswrite=%v, editor=%s, ai_model=%s, os=%s, machine=%s, time=%d}",
 		h.UserID,
 		h.Entity,
 		h.Type,
@@ -143,6 +178,7 @@ func (h *Heartbeat) String() string {
 		h.Language,
 		h.IsWrite,
 		h.Editor,
+		h.AIModel,
 		h.OperatingSystem,
 		h.Machine,
 		(time.Time(h.Time)).UnixNano(),
@@ -166,14 +202,15 @@ func (h *Heartbeat) Hashed() *Heartbeat {
 
 func GetEntityColumn(t uint8) string {
 	return []string{
-		"project",
-		"language",
-		"editor",
-		"operating_system",
-		"machine",
-		"label",
-		"branch",
-		"entity",
-		"category",
+		"project",          // 0
+		"language",         // 1
+		"editor",           // 2
+		"operating_system", // 3
+		"machine",          // 4
+		"label",            // 5
+		"branch",           // 6
+		"entity",           // 7
+		"category",         // 8
+		"ai_model",         // 9
 	}[t]
 }

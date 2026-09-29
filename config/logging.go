@@ -4,13 +4,13 @@ import (
 	"log/slog"
 	"os"
 	"time"
+
+	"github.com/Marlliton/slogpretty"
 )
 
-func InitLogger(isDev bool) {
+func InitLogger(logFormat string) {
 	var handler slog.Handler
-	if isDev {
-		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
-	} else {
+	if logFormat == "json" {
 		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 			Level: slog.LevelInfo,
 			ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
@@ -21,6 +21,11 @@ func InitLogger(isDev bool) {
 				}
 				return a
 			}})
+	} else {
+		handler = slogpretty.New(os.Stdout, &slogpretty.Options{
+			Level:    slog.LevelDebug,
+			Colorful: true,
+		})
 	}
 	slog.SetDefault(slog.New(handler))
 }

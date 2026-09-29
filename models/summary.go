@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/duke-git/lancet/v2/condition"
 	"github.com/duke-git/lancet/v2/mathutil"
 	"github.com/duke-git/lancet/v2/slice"
 )
@@ -22,6 +23,7 @@ const (
 	SummaryBranch   uint8 = 6
 	SummaryEntity   uint8 = 7
 	SummaryCategory uint8 = 8
+	SummaryAiModel  uint8 = 9
 )
 
 const UnknownSummaryKey = "unknown"
@@ -59,7 +61,7 @@ type SummaryItems []*SummaryItem
 type SummaryItem struct {
 	ID        uint64        `json:"-" gorm:"primary_key"`
 	Summary   *Summary      `json:"-" gorm:"not null; constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
-	SummaryID uint          `json:"-" gorm:"size:32"`
+	SummaryID uint          `json:"-" gorm:"size:32;index:idx_summary_item_summary"`
 	Type      uint8         `json:"-" gorm:"index:idx_type"`
 	Key       string        `json:"key" gorm:"size:255"`
 	Total     time.Duration `json:"total" swaggertype:"primitive,integer"`
@@ -291,6 +293,14 @@ func (s *Summary) FillBy(fromType uint8, toType uint8) {
 	}
 }
 
+func (s *Summary) CategoryRatio(c1 string, cAll ...string) float64 {
+	total1 := float64(s.TotalTimeByKey(SummaryCategory, c1))
+	totalAll := mathutil.Sum(slice.Map(cAll, func(i int, c string) float64 {
+		return float64(s.TotalTimeByKey(SummaryCategory, c))
+	})...)
+	return mathutil.RoundToFloat(condition.Ternary(totalAll > 0, total1/totalAll, 0), 2)
+}
+
 func (s *Summary) TotalTime() time.Duration {
 	var timeSum time.Duration
 
@@ -437,11 +447,11 @@ func (s *SummaryParams) HasFilters() bool {
 }
 
 func (s *SummaryParams) IsProjectDetails() bool {
-	if !s.HasFilters() {
+	if !s.HasFilters() || s.Filters.EntityCount() > 1 {
 		return false
 	}
 	_, entity, filters := s.Filters.One()
-	return entity == SummaryProject && len(filters) == 1 // exactly one
+	return entity == SummaryProject && len(filters)-s.Filters.CountAliasesByType(SummaryProject) == 1 // exactly one
 }
 
 func (s *SummaryParams) GetProjectFilter() string {
@@ -449,7 +459,7 @@ func (s *SummaryParams) GetProjectFilter() string {
 		return ""
 	}
 	_, _, filters := s.Filters.One()
-	return filters[0]
+	return filters[0] // first entry is "original" filter, but there might be additional ones for each alias
 }
 
 func (s *SummaryParams) RangeDays() int {

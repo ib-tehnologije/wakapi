@@ -1,6 +1,7 @@
 package middlewares
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/securecookie"
 	"github.com/oauth2-proxy/mockoidc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -19,7 +21,160 @@ import (
 	"github.com/muety/wakapi/mocks"
 	"github.com/muety/wakapi/models"
 	routeutils "github.com/muety/wakapi/routes/utils"
+	testutils "github.com/muety/wakapi/utils/test"
 )
+
+func TestAuthenticateMiddleware_ServeHTTP_ApiKeyRejectedForWebModality(t *testing.T) {
+	config.Set(config.Empty())
+
+	testApiKey := "z5uig69cn9ut93n"
+	testToken := base64.StdEncoding.EncodeToString([]byte(testApiKey))
+
+	r := httptest.NewRequest(http.MethodGet, "/summary", nil)
+	r.Header.Set("Authorization", fmt.Sprintf("Basic %s", testToken))
+	w := httptest.NewRecorder()
+
+	userServiceMock := new(mocks.UserServiceMock)
+
+	sut := NewWebAuthenticateMiddleware(userServiceMock)
+	nextCalled := false
+	sut.ServeHTTP(w, r, func(_ http.ResponseWriter, _ *http.Request) {
+		nextCalled = true
+	})
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.False(t, nextCalled)
+	userServiceMock.AssertNotCalled(t, "GetUserByKey")
+}
+
+func TestAuthenticateMiddleware_ServeHTTP_ApiKeyQueryRejectedForWebModality(t *testing.T) {
+	config.Set(config.Empty())
+
+	testApiKey := "z5uig69cn9ut93n"
+
+	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/summary?api_key=%s", testApiKey), nil)
+	w := httptest.NewRecorder()
+
+	userServiceMock := new(mocks.UserServiceMock)
+
+	sut := NewWebAuthenticateMiddleware(userServiceMock)
+	nextCalled := false
+	sut.ServeHTTP(w, r, func(_ http.ResponseWriter, _ *http.Request) {
+		nextCalled = true
+	})
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.False(t, nextCalled)
+	userServiceMock.AssertNotCalled(t, "GetUserByKey")
+}
+
+func TestAuthenticateMiddleware_ServeHTTP_ApiKeyAcceptedForApiModality(t *testing.T) {
+	config.Set(config.Empty())
+
+	testApiKey := "z5uig69cn9ut93n"
+	testToken := base64.StdEncoding.EncodeToString([]byte(testApiKey))
+	testUser := &models.User{ID: "user01", ApiKey: testApiKey}
+
+	r := httptest.NewRequest(http.MethodGet, "/api/summary", nil)
+	r.Header.Set("Authorization", fmt.Sprintf("Basic %s", testToken))
+	r = r.WithContext(context.WithValue(r.Context(), config.KeySharedData, config.NewSharedData()))
+	w := httptest.NewRecorder()
+
+	userServiceMock := new(mocks.UserServiceMock)
+	userServiceMock.On("GetUserByKey", testApiKey, false).Return(testUser, nil)
+
+	sut := NewApiAuthenticateMiddleware(userServiceMock)
+	nextCalled := false
+	var principal *models.User
+	sut.ServeHTTP(w, r, func(_ http.ResponseWriter, req *http.Request) {
+		nextCalled = true
+		principal = GetPrincipal(req)
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, nextCalled)
+	assert.Equal(t, testUser, principal)
+}
+
+func TestAuthenticateMiddleware_ServeHTTP_CookieAcceptedForWebModality(t *testing.T) {
+	cfg := config.Empty()
+	cfg.Security.CookieKeyBytes = securecookie.GenerateRandomKey(128)
+	config.Set(cfg)
+	config.InitializeCookies()
+
+	testUser := &models.User{ID: "user01"}
+
+	authCookie, err := routeutils.CreateAuthCookie(testUser.ID)
+	assert.NoError(t, err)
+
+	r := httptest.NewRequest(http.MethodGet, "/summary", nil)
+	r.AddCookie(authCookie)
+	r = r.WithContext(context.WithValue(r.Context(), config.KeySharedData, config.NewSharedData()))
+	w := httptest.NewRecorder()
+
+	userServiceMock := new(mocks.UserServiceMock)
+	userServiceMock.On("GetUserById", testUser.ID).Return(testUser, nil)
+
+	sut := NewWebAuthenticateMiddleware(userServiceMock)
+	nextCalled := false
+	var principal *models.User
+	sut.ServeHTTP(w, r, func(_ http.ResponseWriter, req *http.Request) {
+		nextCalled = true
+		principal = GetPrincipal(req)
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, nextCalled)
+	assert.Equal(t, testUser, principal)
+}
+
+func TestAuthenticateMiddleware_ServeHTTP_ApiKeyQueryAcceptedForApiModality(t *testing.T) {
+	config.Set(config.Empty())
+
+	testApiKey := "z5uig69cn9ut93n"
+	testUser := &models.User{ID: "user01", ApiKey: testApiKey}
+
+	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/summary?api_key=%s", testApiKey), nil)
+	r = r.WithContext(context.WithValue(r.Context(), config.KeySharedData, config.NewSharedData()))
+	w := httptest.NewRecorder()
+
+	userServiceMock := new(mocks.UserServiceMock)
+	userServiceMock.On("GetUserByKey", testApiKey, false).Return(testUser, nil)
+
+	sut := NewApiAuthenticateMiddleware(userServiceMock)
+	nextCalled := false
+	var principal *models.User
+	sut.ServeHTTP(w, r, func(_ http.ResponseWriter, req *http.Request) {
+		nextCalled = true
+		principal = GetPrincipal(req)
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, nextCalled)
+	assert.Equal(t, testUser, principal)
+}
+
+func TestAuthenticateMiddleware_WithModalities(t *testing.T) {
+	userServiceMock := new(mocks.UserServiceMock)
+
+	sut := NewAuthenticateMiddleware(userServiceMock)
+	assert.True(t, sut.allows(AuthModalityCookie))
+	assert.True(t, sut.allows(AuthModalityOidc))
+	assert.True(t, sut.allows(AuthModalityApiKey))
+	assert.True(t, sut.allows(AuthModalityTrustedHeader))
+
+	sut.WithModalities(AuthModalityApiKey)
+	assert.False(t, sut.allows(AuthModalityCookie))
+	assert.False(t, sut.allows(AuthModalityOidc))
+	assert.True(t, sut.allows(AuthModalityApiKey))
+	assert.False(t, sut.allows(AuthModalityTrustedHeader))
+
+	sut.WithModalities()
+	assert.False(t, sut.allows(AuthModalityCookie))
+	assert.False(t, sut.allows(AuthModalityOidc))
+	assert.False(t, sut.allows(AuthModalityApiKey))
+	assert.False(t, sut.allows(AuthModalityTrustedHeader))
+}
 
 func TestAuthenticateMiddleware_tryGetUserByApiKeyHeader_Success(t *testing.T) {
 	testApiKey := "z5uig69cn9ut93n"
@@ -283,7 +438,7 @@ func TestAuthenticateMiddleware_tryGetUserByTrustedHeader_Signup(t *testing.T) {
 	}
 }
 
-func TestAuthenticateMiddleware_tryHandleOidc_NoToken(t *testing.T) {
+func TestAuthenticateMiddleware_tryGetUserByOidc_NoToken(t *testing.T) {
 	config.Set(config.Empty())
 
 	userServiceMock := new(mocks.UserServiceMock)
@@ -293,15 +448,17 @@ func TestAuthenticateMiddleware_tryHandleOidc_NoToken(t *testing.T) {
 
 	sut := NewAuthenticateMiddleware(userServiceMock)
 
-	assert.False(t, sut.tryHandleOidc(w, r))
-	assert.NotEqual(t, w.Code, http.StatusTemporaryRedirect)
-	assert.NotEqual(t, w.Code, http.StatusFound)
+	result, err := sut.tryGetUserByOidc(w, r)
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
 }
 
-func TestAuthenticateMiddleware_tryHandleOidc_InvalidToken_ExistingUser(t *testing.T) {
+func TestAuthenticateMiddleware_tryGetUserByOidc_ValidToken(t *testing.T) {
 	const (
 		testProvider = "mock"
 		testSub      = "testsub"
+		testEmail    = "test@example.com"
 	)
 	var testUser = &models.User{ID: "testuser"}
 
@@ -310,80 +467,150 @@ func TestAuthenticateMiddleware_tryHandleOidc_InvalidToken_ExistingUser(t *testi
 
 	cfg := config.Empty()
 	config.Set(cfg)
-	config.WithOidcProvider(cfg, testProvider, oidcMock.ClientID, oidcMock.ClientSecret, oidcMock.Addr()+"/oidc")
+	config.WithOidcProvider(cfg, testProvider, oidcMock.ClientID, oidcMock.ClientSecret, oidcMock.Addr()+"/oidc", "")
 
 	r := httptest.NewRequest(http.MethodGet, "/summary", nil)
 	w := httptest.NewRecorder()
 
-	testIdToken := &config.IdTokenPayload{
-		Subject:      testSub,
-		Expiry:       time.Now().Add(-time.Minute).Unix(),
-		ProviderName: testProvider,
-	}
-	routeutils.SetOidcIdTokenPayload(testIdToken, r, w)
+	session, err := oidcMock.SessionStore.NewSession(
+		"openid profile email",
+		"",
+		&mockoidc.MockUser{
+			Subject:           testSub,
+			Email:             testEmail,
+			PreferredUsername: testUser.ID,
+		},
+		"code",
+		"method",
+	)
+	assert.NoError(t, err)
+
+	idToken, err := session.IDToken(oidcMock.Config(), oidcMock.Keypair, time.Now())
+	assert.NoError(t, err)
+
+	r.AddCookie(cfg.CreateCookie(config.CookieKeyOidcProvider, testProvider))
+	r.AddCookie(cfg.CreateCookie(config.CookieKeyOidcIdToken, idToken))
 
 	userServiceMock := new(mocks.UserServiceMock)
 	userServiceMock.On("GetUserByOidc", testProvider, testSub).Return(testUser, nil)
 
 	sut := NewAuthenticateMiddleware(userServiceMock)
 
-	assert.True(t, sut.tryHandleOidc(w, r))
-	assert.Equal(t, w.Code, http.StatusFound)
-	assert.True(t, strings.HasPrefix(w.Header().Get("Location"), oidcMock.AuthorizationEndpoint()))
-	assert.NotEmpty(t, routeutils.GetOidcState(r))
-	assert.Contains(t, w.Header().Get("Location"), fmt.Sprintf("state=%s", routeutils.GetOidcState(r)))
+	result, err := sut.tryGetUserByOidc(w, r)
+	assert.NoError(t, err)
+	assert.Equal(t, testUser, result)
 }
 
-func TestAuthenticateMiddleware_tryHandleOidc_InvalidToken_NonExistingUser(t *testing.T) {
+func TestAuthenticateMiddleware_tryGetUserByOidc_ExpiredTokenNoRefreshToken(t *testing.T) {
 	const (
 		testProvider = "mock"
 		testSub      = "testsub"
+		testEmail    = "test@example.com"
 	)
+	var testUser = &models.User{ID: "testuser"}
 
 	oidcMock, _ := mockoidc.Run()
 	defer oidcMock.Shutdown()
 
 	cfg := config.Empty()
 	config.Set(cfg)
-	config.WithOidcProvider(cfg, testProvider, oidcMock.ClientID, oidcMock.ClientSecret, oidcMock.Addr()+"/oidc")
+	config.WithOidcProvider(cfg, testProvider, oidcMock.ClientID, oidcMock.ClientSecret, oidcMock.Addr()+"/oidc", "")
 
 	r := httptest.NewRequest(http.MethodGet, "/summary", nil)
 	w := httptest.NewRecorder()
 
-	testIdToken := &config.IdTokenPayload{
-		Subject:      testSub,
-		Expiry:       time.Now().Add(-time.Minute).Unix(),
-		ProviderName: testProvider,
-	}
-	routeutils.SetOidcIdTokenPayload(testIdToken, r, w)
+	session, err := oidcMock.SessionStore.NewSession(
+		"openid profile email",
+		"",
+		&mockoidc.MockUser{
+			Subject:           testSub,
+			Email:             testEmail,
+			PreferredUsername: testUser.ID,
+		},
+		"code",
+		"method",
+	)
+	assert.NoError(t, err)
+
+	oidcMockConfig := oidcMock.Config()
+	// Ensure the token is expired
+	tokenIssuedTime := time.Now().Add(-oidcMockConfig.AccessTTL * 2)
+
+	idToken, err := session.IDToken(oidcMockConfig, oidcMock.Keypair, tokenIssuedTime)
+	assert.NoError(t, err)
+
+	r.AddCookie(cfg.CreateCookie(config.CookieKeyOidcProvider, testProvider))
+	r.AddCookie(cfg.CreateCookie(config.CookieKeyOidcIdToken, idToken))
 
 	userServiceMock := new(mocks.UserServiceMock)
-	userServiceMock.On("GetUserByOidc", testProvider, testSub).Return(nil, errors.New(""))
+	userServiceMock.On("GetUserByOidc", testProvider, testSub).Return(testUser, nil)
 
 	sut := NewAuthenticateMiddleware(userServiceMock)
 
-	assert.False(t, sut.tryHandleOidc(w, r))
-	assert.NotEqual(t, w.Code, http.StatusTemporaryRedirect)
-	assert.NotEqual(t, w.Code, http.StatusFound)
+	_, err = sut.tryGetUserByOidc(w, r)
+	assert.Error(t, err)
 }
 
-func TestAuthenticateMiddleware_tryHandleOidc_ValidToken(t *testing.T) {
-	config.Set(config.Empty())
+func TestAuthenticateMiddleware_tryGetUserByOidc_ExpiredTokenWithRefreshToken(t *testing.T) {
+	const (
+		testProvider = "mock"
+		testSub      = "testsub"
+		testEmail    = "test@example.com"
+	)
+	var testUser = &models.User{ID: "testuser"}
 
-	userServiceMock := new(mocks.UserServiceMock)
+	oidcMock, _ := mockoidc.Run()
+	defer oidcMock.Shutdown()
+
+	cfg := config.Empty()
+	config.Set(cfg)
+	config.WithOidcProvider(cfg, testProvider, oidcMock.ClientID, oidcMock.ClientSecret, oidcMock.Addr()+"/oidc", "")
 
 	r := httptest.NewRequest(http.MethodGet, "/summary", nil)
 	w := httptest.NewRecorder()
 
-	routeutils.SetOidcIdTokenPayload(&config.IdTokenPayload{
-		Expiry: time.Now().Add(1 * time.Minute).Unix(),
-	}, r, w)
+	session, err := oidcMock.SessionStore.NewSession(
+		"openid profile email",
+		"",
+		&mockoidc.MockUser{
+			Subject:           testSub,
+			Email:             testEmail,
+			PreferredUsername: testUser.ID,
+		},
+		"code",
+		"method",
+	)
+	assert.NoError(t, err)
+
+	oidcMockConfig := oidcMock.Config()
+	// Ensure the token is expired
+	tokenIssuedTime := time.Now().Add(-oidcMockConfig.AccessTTL * 2)
+
+	idToken, err := session.IDToken(oidcMockConfig, oidcMock.Keypair, tokenIssuedTime)
+	assert.NoError(t, err)
+	refreshToken, err := session.RefreshToken(oidcMockConfig, oidcMock.Keypair, tokenIssuedTime)
+	assert.NoError(t, err)
+
+	r.AddCookie(cfg.CreateCookie(config.CookieKeyOidcProvider, testProvider))
+	r.AddCookie(cfg.CreateCookie(config.CookieKeyOidcIdToken, idToken))
+	r.AddCookie(cfg.CreateCookie(config.CookieKeyOidcRefreshToken, refreshToken))
+
+	userServiceMock := new(mocks.UserServiceMock)
+	userServiceMock.On("GetUserByOidc", testProvider, testSub).Return(testUser, nil)
 
 	sut := NewAuthenticateMiddleware(userServiceMock)
 
-	assert.False(t, sut.tryHandleOidc(w, r))
-	assert.NotEqual(t, w.Code, http.StatusTemporaryRedirect)
-	assert.NotEqual(t, w.Code, http.StatusFound)
+	result, err := sut.tryGetUserByOidc(w, r)
+	assert.NoError(t, err)
+	assert.Equal(t, testUser, result)
+
+	// Check that refresh token and id token are set
+	testutils.AssertContainsHeaderMatching(t, w.Header(), "Set-Cookie", func(value string) bool {
+		return strings.Contains(value, "oidc_id_token=")
+	}, "OIDC id_token cookie not set in response")
+	testutils.AssertContainsHeaderMatching(t, w.Header(), "Set-Cookie", func(value string) bool {
+		return strings.Contains(value, "oidc_refresh_token=")
+	})
 }
 
 // TODO: somehow test cookie auth function

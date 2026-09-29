@@ -10,6 +10,7 @@ import (
 	"github.com/muety/wakapi/services"
 	"github.com/muety/wakapi/utils"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -17,20 +18,22 @@ type ProjectsHandler struct {
 	config           *conf.Config
 	userService      services.IUserService
 	heartbeatService services.IHeartbeatService
+	projectService   services.IProjectService
 }
 
-func NewProjectsHandler(userService services.IUserService, heartbeatService services.IHeartbeatService) *ProjectsHandler {
+func NewProjectsHandler(userService services.IUserService, heartbeatService services.IHeartbeatService, projectService services.IProjectService) *ProjectsHandler {
 	return &ProjectsHandler{
 		config:           conf.Get(),
 		userService:      userService,
 		heartbeatService: heartbeatService,
+		projectService:   projectService,
 	}
 }
 
 func (h *ProjectsHandler) RegisterRoutes(router chi.Router) {
 	r := chi.NewRouter()
 	r.Use(
-		middlewares.NewAuthenticateMiddleware(h.userService).
+		middlewares.NewWebAuthenticateMiddleware(h.userService).
 			WithRedirectTarget(defaultErrorRedirectTarget()).
 			WithRedirectErrorMessage("unauthorized").Handler,
 	)
@@ -59,11 +62,12 @@ func (h *ProjectsHandler) buildViewModel(r *http.Request, w http.ResponseWriter)
 	// note: pagination is not fully implemented, yet
 	// count function to get total item / total pages is missing
 	// and according ui (+ optionally search bar) is missing, too
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
 
 	var err error
 	var projects []*models.ProjectStats
 
-	projects, err = h.heartbeatService.GetUserProjectStats(user, time.Time{}, utils.BeginOfToday(time.Local), pageParams, false)
+	projects, err = h.projectService.GetUserProjectStats(user, time.Time{}, utils.BeginOfToday(time.Local), query, pageParams, false)
 	if err != nil {
 		conf.Log().Request(r).Error("error while fetching project stats", "userID", user.ID, "error", err)
 		return &view.ProjectsViewModel{
@@ -81,6 +85,7 @@ func (h *ProjectsHandler) buildViewModel(r *http.Request, w http.ResponseWriter)
 		},
 		Projects:   projects,
 		PageParams: pageParams,
+		Query:      query,
 	}
 	return routeutils.WithSessionMessages(vm, r, w)
 }

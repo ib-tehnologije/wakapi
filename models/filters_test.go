@@ -1,9 +1,10 @@
 package models
 
 import (
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
-	"testing"
 )
 
 type FiltersTestSuite struct {
@@ -30,6 +31,11 @@ func (suite *FiltersTestSuite) SetupSuite() {
 			Type:  SummaryLanguage,
 			Key:   "Python",
 			Value: "Python 3",
+		},
+		{
+			Type:  SummaryAiModel,
+			Key:   "Claude 3.5 Sonnet",
+			Value: "claude-3-5-sonnet",
 		},
 	}
 
@@ -84,8 +90,13 @@ func (suite *FiltersTestSuite) TestFilters_IsEmpty() {
 
 func (suite *FiltersTestSuite) TestFilters_Match() {
 	heartbeats := []*Heartbeat{
+<<<<<<< HEAD
 		{Project: "wakapi", Language: "Go", Branch: "main", Entity: "services/heartbeat.go", Category: "coding"},
 		{Project: "anchr", Language: "Javascript", Branch: "feature", Entity: "app.ts", Category: "debugging"},
+=======
+		{Project: "wakapi", Language: "Go", AIModel: "claude-3-5-sonnet"},
+		{Project: "anchr", Language: "Javascript", AIModel: "gpt-4o"},
+>>>>>>> upstream/master
 	}
 
 	sut1 := NewFiltersWith(SummaryProject, "wakapi")
@@ -104,6 +115,7 @@ func (suite *FiltersTestSuite) TestFilters_Match() {
 	assert.True(suite.T(), sut4.MatchHeartbeat(heartbeats[0]))
 	assert.True(suite.T(), sut4.MatchHeartbeat(heartbeats[1]))
 
+<<<<<<< HEAD
 	sut5 := NewFiltersWith(SummaryProject, "wakapi").With(SummaryBranch, "main")
 	assert.True(suite.T(), sut5.MatchHeartbeat(heartbeats[0]))
 	assert.False(suite.T(), sut5.MatchHeartbeat(heartbeats[1]))
@@ -131,6 +143,11 @@ func (suite *FiltersTestSuite) TestFilters_MatchDuration_HonorsBranchEntityAndCa
 	assert.False(suite.T(), NewFiltersWith(SummaryEntity, "services/heartbeat.go").MatchDuration(duration))
 	assert.True(suite.T(), NewFiltersWith(SummaryCategory, "coding").MatchDuration(duration))
 	assert.False(suite.T(), NewFiltersWith(SummaryCategory, "debugging").MatchDuration(duration))
+=======
+	sut5 := NewFiltersWith(SummaryAiModel, "claude-3-5-sonnet")
+	assert.True(suite.T(), sut5.MatchHeartbeat(heartbeats[0]))
+	assert.False(suite.T(), sut5.MatchHeartbeat(heartbeats[1]))
+>>>>>>> upstream/master
 }
 
 func (suite *FiltersTestSuite) TestFilters_One() {
@@ -145,6 +162,12 @@ func (suite *FiltersTestSuite) TestFilters_One() {
 	assert.False(suite.T(), ok2)
 	assert.Zero(suite.T(), type2)
 	assert.Empty(suite.T(), filters2)
+
+	sut3 := NewFiltersWith(SummaryAiModel, "claude-3-5-sonnet")
+	ok3, type3, filters3 := sut3.One()
+	assert.True(suite.T(), ok3)
+	assert.Equal(suite.T(), SummaryAiModel, type3)
+	assert.Equal(suite.T(), "claude-3-5-sonnet", filters3[0])
 }
 
 func (suite *FiltersTestSuite) TestFilters_WithAliases() {
@@ -155,6 +178,7 @@ func (suite *FiltersTestSuite) TestFilters_WithAliases() {
 	assert.Contains(suite.T(), sut1.Project, "wakapi")
 	assert.Contains(suite.T(), sut1.Project, "wakapi-desktop")
 	assert.Contains(suite.T(), sut1.Project, "wakapi-mobile")
+	assert.Equal(suite.T(), 2, sut1.CountAliasesByType(SummaryProject))
 
 	sut2 := NewFiltersWith(SummaryProject, "wakapi").With(SummaryLanguage, "Python")
 	sut2 = sut2.WithAliases(suite.GetAliasReverseResolver([]int{0, 1, 2}))
@@ -162,12 +186,22 @@ func (suite *FiltersTestSuite) TestFilters_WithAliases() {
 	assert.Len(suite.T(), sut2.Language, 2)
 	assert.Contains(suite.T(), sut2.Language, "Python")
 	assert.Contains(suite.T(), sut2.Language, "Python 3")
+	assert.Equal(suite.T(), 2, sut2.CountAliasesByType(SummaryProject))
+	assert.Equal(suite.T(), 1, sut2.CountAliasesByType(SummaryLanguage))
 
 	sut3 := NewFiltersWith(SummaryProject, "foo")
-	sut3 = sut3.WithAliases(suite.GetAliasReverseResolver([]int{0, 1, 2}))
+	sut3 = sut3.WithAliases(suite.GetAliasReverseResolver([]int{0, 1, 2, 3}))
 	assert.Len(suite.T(), sut3.Project, 1)
 	assert.Len(suite.T(), sut3.Language, 0)
 	assert.Contains(suite.T(), sut3.Project, "foo")
+	assert.Equal(suite.T(), 0, sut3.CountAliasesByType(SummaryProject))
+
+	sut4 := NewFiltersWith(SummaryAiModel, "Claude 3.5 Sonnet")
+	sut4 = sut4.WithAliases(suite.GetAliasReverseResolver([]int{0, 1, 2, 3}))
+	assert.Len(suite.T(), sut4.AIModel, 2)
+	assert.Contains(suite.T(), sut4.AIModel, "Claude 3.5 Sonnet")
+	assert.Contains(suite.T(), sut4.AIModel, "claude-3-5-sonnet")
+	assert.Equal(suite.T(), 1, sut4.CountAliasesByType(SummaryAiModel))
 }
 
 func (suite *FiltersTestSuite) TestFilters_WithProjectLabels() {

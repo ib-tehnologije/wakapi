@@ -12,12 +12,12 @@ jobs:
       contents: read
     steps:
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v5
+      uses: actions/checkout@v7
 
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.25
+        go-version: ^1.27
       id: go
 
     - name: Get dependencies
@@ -48,12 +48,12 @@ jobs:
 
     steps:
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v5
+      uses: actions/checkout@v7
 
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.25
+        go-version: ^1.27
       id: go
 
     - run: npm install -g @usebruno/cli@2.15.0

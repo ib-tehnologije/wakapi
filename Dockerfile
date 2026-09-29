@@ -1,25 +1,22 @@
 FROM --platform=$BUILDPLATFORM golang:alpine AS build-env
 WORKDIR /src
 
-RUN wget "https://raw.githubusercontent.com/vishnubob/wait-for-it/master/wait-for-it.sh" -O wait-for-it.sh && \
-    chmod +x wait-for-it.sh
-
 COPY ./go.mod ./go.sum ./
 RUN go mod download
 COPY . .
 
 ARG TARGETOS
 ARG TARGETARCH
-RUN GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 GOEXPERIMENT=greenteagc,jsonv2 go build -ldflags "-s -w" -v -o wakapi main.go
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 GOEXPERIMENT=jsonv2 go build -ldflags "-s -w" -v -o wakapi main.go
+# Need a statically linked healthcheck binary because we can't use curl in a distroless image in a straightforward way
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 go build -ldflags "-s -w" -v -o healthcheck scripts/healthcheck.go
 
 WORKDIR /staging
 RUN mkdir ./data ./app && \
     cp /src/wakapi app/ && \
+    cp /src/healthcheck app/ && \
     cp /src/config.default.yml app/config.yml && \
-    sed -i 's/listen_ipv6: ::1/listen_ipv6: "-"/g' app/config.yml && \
-    cp /src/wait-for-it.sh app/ && \
-    cp /src/entrypoint.sh app/ && \
-    chown 1000:1000 ./data
+    sed -i 's/listen_ipv6: ::1/listen_ipv6: "-"/g' app/config.yml
 
 # Run Stage
 
@@ -27,12 +24,12 @@ RUN mkdir ./data ./app && \
 # to override config values using `-e` syntax.
 # Available options can be found in [README.md#-configuration](README.md#-configuration)
 
-FROM alpine:3
-WORKDIR /app
+# Note on the distroless image:
+# we could use `base:nonroot`, which already includes ca-certificates and tz, but that one it actually larger than alpine,
+# probably because of glibc, whereas alpine uses musl. The `static:nonroot`, doesn't include any libc implementation, because only meant for true static binaries without cgo, etc.
 
-RUN addgroup -g 1000 app && \
-    adduser -u 1000 -G app -s /bin/sh -D app && \
-    apk add --no-cache bash ca-certificates tzdata
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /app
 
 # See README.md and config.default.yml for all config options
 ENV ENVIRONMENT=prod \
@@ -46,7 +43,8 @@ ENV ENVIRONMENT=prod \
     WAKAPI_INSECURE_COOKIES='true' \
     WAKAPI_ALLOW_SIGNUP='true'
 
-COPY --from=build-env /staging /
+COPY --from=build-env --chown=root:root /staging/app /app
+COPY --from=build-env --chown=nonroot:nonroot /staging/data /data
 
 LABEL org.opencontainers.image.url="https://github.com/muety/wakapi" \
     org.opencontainers.image.documentation="https://github.com/muety/wakapi" \
@@ -55,8 +53,11 @@ LABEL org.opencontainers.image.url="https://github.com/muety/wakapi" \
     org.opencontainers.image.licenses="MIT" \
     org.opencontainers.image.description="A minimalist, self-hosted WakaTime-compatible backend for coding statistics"
 
-USER app
+USER nonroot
 
 EXPOSE 3000
 
-ENTRYPOINT /app/entrypoint.sh
+# For long-running migrations, you might want to override `---health-start-period` as part of `docker run` or disable healthchecks entirely with `--no-healtcheck`
+HEALTHCHECK --interval=60s --timeout=3s --start-period=120s --retries=3 CMD ["/app/healthcheck"]
+
+ENTRYPOINT ["/app/wakapi"]
