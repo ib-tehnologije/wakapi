@@ -10,6 +10,14 @@ get {
   auth: none
 }
 
+script:pre-request {
+  bru.cookies.jar().clear()
+}
+
+headers {
+  Cookie: {{WEB_AUTH_COOKIE}}
+}
+
 assert {
   res.body: contains </html>
   res.body: contains <span class="text-sm">Logout</span>

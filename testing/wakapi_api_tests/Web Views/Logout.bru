@@ -10,7 +10,12 @@ post {
   auth: none
 }
 
+headers {
+  Cookie: {{WEB_AUTH_COOKIE}}
+}
+
 script:pre-request {
+  bru.cookies.jar().clear()
   req.setMaxRedirects(0)
 }
 

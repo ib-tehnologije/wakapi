@@ -19,6 +19,12 @@ body:form-urlencoded {
   password: {{WRITEUSER_PASSWORD}}
 }
 
+script:post-response {
+  const authCookie = res.headers['set-cookie'].find(cookie => cookie.startsWith('wakapi_auth='))
+  if (!authCookie) throw new Error('login did not set an authentication cookie')
+  bru.setVar('WRITEUSER_AUTH_COOKIE', authCookie.split(';')[0])
+}
+
 assert {
   res.status: eq 302
   res.headers['location']: eq /summary
