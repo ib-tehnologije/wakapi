@@ -25,12 +25,14 @@ Context: commit syncing & WakaTime-compatible commit endpoints are partially imp
 ## Nice-to-have (later)
 7. **GitHub App / OAuth**  
    - Alternative auth to reduce PAT friction and scope overreach.
-8. **Multiple repos per project & branch-aware commits**  
-   - Branch/ref join table to avoid duplicating commits across branches; UI picker for branch list from GitHub.
+8. **Multiple repos per project**  
+   - UI picker for branch list from GitHub.
 9. **Telemetry & observability**  
    - Metrics for sync duration/failures and queue depth.
 
 ## Decision defaults
+- Per-commit time (algo v4): a commit on the synced branch gets all of the project's tracked time since the previous commit on that branch, whatever branch or worktree it was tracked on. Feature-branch, worktree and uncommitted work is credited to the next commit that lands on the synced branch (merge commits included); intervals don't overlap, so nothing is counted twice. Only the synced (default or overridden) branch's commits are pulled; a branch/ref join table for branch-aware commits was considered and dropped (GitHub API cost per branch, breaks on rebase/squash).
+- Late heartbeats: a heartbeat marks the stats of the user's commits made at or after its time stale; only those are recomputed, on the next sync or read.
 - Auth: fine-grained PAT with Contents: Read (minimum), user-provided.  
 - Sync cadence: every 10 minutes; stale threshold 15 minutes (matches on-demand check).  
 - Max page size: 100 commits per GitHub call; stop at first known hash.  

@@ -10,7 +10,7 @@ const (
 	ScmAuthTypePat       = "pat"
 	ScmAuthTypeOAuthApp  = "oauth_app"
 
-	CommitAlgoVersion = 3 // 3: forces one full recomputation after heartbeats started marking stats stale
+	CommitAlgoVersion = 4 // 4: time on all branches of the project counts, not only the synced branch
 )
 
 // ScmAccount stores a user's connection to a source control provider (GitHub for now).

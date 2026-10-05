@@ -56,10 +56,12 @@ type fakeDurationService struct {
 	IDurationService
 	durations models.Durations
 	calls     int
+	filters   *models.Filters
 }
 
 func (f *fakeDurationService) Get(from, to time.Time, user *models.User, filters *models.Filters, customTimeout *time.Duration, skipCache bool) (models.Durations, error) {
 	f.calls++
+	f.filters = filters
 	return f.durations, nil
 }
 
@@ -122,6 +124,9 @@ func TestCommitService_ComputeStats_OnlyRecomputesStaleCommits(t *testing.T) {
 	assert.NoError(t, sut.computeStats("u1", "proj", repo, "main"))
 	assert.Equal(t, []string{"b", "c", "d", "e"}, stats.upserted)
 	assert.Equal(t, 4, durations.calls)
+	// time on any branch of the project counts
+	assert.Equal(t, models.OrFilter{"proj"}, durations.filters.Project)
+	assert.Empty(t, durations.filters.Branch)
 	assert.Equal(t, float64(20*60), stats.stats["b"].TotalSeconds)
 	assert.False(t, stats.stats["b"].Dirty)
 	assert.Equal(t, models.CommitAlgoVersion, stats.stats["c"].AlgoVersion)

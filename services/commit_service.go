@@ -724,7 +724,8 @@ func (s *CommitService) SyncByID(user *models.User, linkID string) error {
 	return s.Sync(link, account, repo)
 }
 
-// computeStats computes the time per commit for commits that have no stat yet or whose stat is
+// computeStats computes the time per commit (the project's time since the previous commit on the
+// branch) for commits that have no stat yet or whose stat is
 // stale (marked dirty or from an older algorithm version); current stats are left alone.
 func (s *CommitService) computeStats(userID, project string, repo *models.ScmRepository, branch string) error {
 	mu, _ := s.computeMu.LoadOrStore(userID+"\x00"+project+"\x00"+branch, &sync.Mutex{})
@@ -753,8 +754,10 @@ func (s *CommitService) computeStats(userID, project string, repo *models.ScmRep
 		return a.CommitterDate.T().Compare(b.CommitterDate.T())
 	})
 
-	// Build filters
-	filters := &models.Filters{Project: models.OrFilter{project}, Branch: models.OrFilter{branch}}
+	// All of the project's time counts, whatever branch or worktree it was tracked on: work on a
+	// feature branch is credited to the next commit that lands on the synced branch. The intervals
+	// between consecutive commits don't overlap, so no time is counted twice.
+	filters := &models.Filters{Project: models.OrFilter{project}}
 
 	var prev time.Time
 	prevIsNew := false

@@ -207,15 +207,12 @@ func (h *SummaryHandler) fetchCommitCheckpoints(user *models.User, summary *mode
 			repo = info.Repo
 		}
 
-		filters := &models.Filters{}
-		if result.Branch != "" {
-			filters.Branch = models.OrFilter{result.Branch}
-		}
-		durations, err := h.durationSrvc.Get(from, to, user, filters, nil, false)
+		// like the per-commit stats, count the project's time on all branches
+		durations, err := h.durationSrvc.Get(from, to, user, &models.Filters{}, nil, false)
 		if err != nil {
 			continue
 		}
-		durations = filterCheckpointDurations(durations, info.Link.Project, result.Branch)
+		durations = filterCheckpointDurations(durations, info.Link.Project, "")
 
 		project := view.NewCommitCheckpointProject(info.Link.Project, result.Branch, repo, durations, result.Stats, result.Commits, from, to)
 		if project == nil || project.TotalSeconds <= 0 || len(project.Points) < 2 {

@@ -175,7 +175,8 @@ func TestSummaryHandlerFetchCommitCheckpointsKeepsRelevantLinkedProjects(t *test
 	assert.Equal(t, []string{"wakapi"}, commitService.projectsCalled)
 	assert.Equal(t, 1, durationService.projectsCalls)
 	assert.Nil(t, durationService.filters.Project)
-	assert.Equal(t, models.OrFilter{"master"}, durationService.filters.Branch)
+	// time on all branches of the project counts, like in the per-commit stats
+	assert.Empty(t, durationService.filters.Branch)
 	require.NotNil(t, commitService.dateFrom)
 	require.NotNil(t, commitService.dateTo)
 	assert.Equal(t, from, *commitService.dateFrom)
