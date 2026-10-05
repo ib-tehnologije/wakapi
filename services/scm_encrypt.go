@@ -45,7 +45,9 @@ func newTokenCipher() TokenCipher {
 		hash := sha512.Sum512([]byte(cfg.Security.PasswordSalt))
 		hashKey := hash[:32]
 		blockKey := hash[32:]
-		secures = append(secures, securecookie.New(hashKey, blockKey))
+		// Stored tokens are secrets at rest, not cookies: disable securecookie's default
+		// 30-day max age, otherwise a saved token stops decrypting a month after it was saved.
+		secures = append(secures, securecookie.New(hashKey, blockKey).MaxAge(0))
 	}
 
 	// Fallback to the configured auth cookie cipher when no password salt is set.
