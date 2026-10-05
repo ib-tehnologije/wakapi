@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gofrs/uuid/v5"
+	"github.com/leandro-lugaresi/hub"
 	"github.com/muety/artifex/v2"
 	"github.com/muety/wakapi/config"
 	"github.com/muety/wakapi/helpers"
@@ -23,7 +24,9 @@ const (
 	defaultCommitPageSize = 50
 	maxCommitPageSize     = 200
 	linkSyncStaleAfter    = 15 * time.Minute
-	lookbackWindow        = 30 * 24 * time.Hour
+	// a project's commit stats are marked stale at most once per this interval while heartbeats flow in
+	commitStatsDirtyDebounce = 1 * time.Minute
+	lookbackWindow           = 30 * 24 * time.Hour
 )
 
 var (
@@ -63,6 +66,8 @@ type CommitService struct {
 	queue       *artifex.Dispatcher
 	repoCache   map[string]repoCacheEntry
 	repoCacheMu sync.RWMutex
+	lastDirty   map[string]time.Time // user+project -> last time its commit stats were marked stale
+	lastDirtyMu sync.Mutex
 }
 
 // ProjectLinkInfo bundles a link with its repository metadata for UI consumption.
@@ -81,7 +86,7 @@ func NewCommitService(
 	heartbeatService IHeartbeatService,
 	durationService IDurationService,
 ) *CommitService {
-	return &CommitService{
+	srv := &CommitService{
 		config:      config.Get(),
 		accounts:    accountRepo,
 		repos:       repoRepo,
@@ -93,7 +98,50 @@ func NewCommitService(
 		durations:   durationService,
 		queue:       config.GetQueue(config.QueueDefault),
 		repoCache:   make(map[string]repoCacheEntry),
+		lastDirty:   make(map[string]time.Time),
 	}
+
+	// Per-commit time is computed when a commit is synced. Heartbeats that arrive afterwards
+	// (late or backfilled ones) would otherwise only be counted once the next commit comes in,
+	// so every incoming heartbeat marks its project's commit stats stale; they are recomputed
+	// on the next read (ensureStatsCurrent).
+	sub := config.EventBus().Subscribe(0, config.EventHeartbeatCreate)
+	go func(sub *hub.Subscription) {
+		for m := range sub.Receiver {
+			heartbeat, ok := m.Fields[config.FieldPayload].(*models.Heartbeat)
+			if !ok || heartbeat == nil {
+				continue
+			}
+			srv.noteHeartbeat(heartbeat.UserID, heartbeat.Project, time.Now())
+		}
+	}(&sub)
+
+	return srv
+}
+
+// noteHeartbeat marks all commit stats of the heartbeat's project stale, at most once per
+// commitStatsDirtyDebounce per user and project. Returns whether stats were marked.
+func (s *CommitService) noteHeartbeat(userID, project string, now time.Time) bool {
+	if userID == "" || project == "" {
+		return false
+	}
+	key := userID + "\x00" + project
+	s.lastDirtyMu.Lock()
+	if t, ok := s.lastDirty[key]; ok && now.Sub(t) < commitStatsDirtyDebounce {
+		s.lastDirtyMu.Unlock()
+		return false
+	}
+	s.lastDirty[key] = now
+	s.lastDirtyMu.Unlock()
+
+	if err := s.stats.MarkDirtyByUserProjectAfter(userID, project, time.Time{}); err != nil {
+		slog.Warn("failed to mark commit stats stale", "project", project, "error", err)
+		s.lastDirtyMu.Lock()
+		delete(s.lastDirty, key) // retry with the next heartbeat
+		s.lastDirtyMu.Unlock()
+		return false
+	}
+	return true
 }
 
 // LinkProject links a Wakapi project to a GitHub repo using an explicit token (PAT) or the user's stored SCM account token.

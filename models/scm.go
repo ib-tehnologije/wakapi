@@ -10,7 +10,7 @@ const (
 	ScmAuthTypePat       = "pat"
 	ScmAuthTypeOAuthApp  = "oauth_app"
 
-	CommitAlgoVersion = 2
+	CommitAlgoVersion = 3 // 3: forces one full recomputation after heartbeats started marking stats stale
 )
 
 // ScmAccount stores a user's connection to a source control provider (GitHub for now).
