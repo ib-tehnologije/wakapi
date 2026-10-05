@@ -197,7 +197,7 @@ type IScmCommitRepository interface {
 type ICommitStatRepository interface {
 	IBaseRepository
 	Upsert(*models.CommitStat) error
-	MarkDirtyByUserProjectAfter(string, string, time.Time) error
+	MarkDirtyByUserCommittedSince(string, time.Time) error
 	GetByUserProjectBranch(string, string, string, int, int) ([]*models.CommitStat, int64, error)
 	GetByUserProjectBranchAndHash(string, string, string, string) (*models.CommitStat, error)
 	DeleteByRepo(string) error

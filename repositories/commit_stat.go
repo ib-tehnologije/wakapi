@@ -29,10 +29,12 @@ func (r *CommitStatRepository) DeleteByRepo(repoID string) error {
 	return r.db.Where(&models.CommitStat{RepositoryID: repoID}).Delete(&models.CommitStat{}).Error
 }
 
-func (r *CommitStatRepository) MarkDirtyByUserProjectAfter(userID, project string, after time.Time) error {
+// MarkDirtyByUserCommittedSince marks the stats of all the user's commits made at or after the given time stale.
+func (r *CommitStatRepository) MarkDirtyByUserCommittedSince(userID string, since time.Time) error {
 	return r.db.
 		Model(&models.CommitStat{}).
-		Where("user_id = ? AND project = ? AND calculated_at >= ?", userID, project, after).
+		Where("user_id = ? AND dirty = ?", userID, false).
+		Where("EXISTS (SELECT 1 FROM scm_commits WHERE scm_commits.repository_id = commit_stats.repository_id AND scm_commits.hash = commit_stats.commit_hash AND scm_commits.committer_date >= ?)", models.CustomTime(since)).
 		Update("dirty", true).Error
 }
 

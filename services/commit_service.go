@@ -24,7 +24,7 @@ const (
 	defaultCommitPageSize = 50
 	maxCommitPageSize     = 200
 	linkSyncStaleAfter    = 15 * time.Minute
-	// a project's commit stats are marked stale at most once per this interval while heartbeats flow in
+	// a user's commit stats are marked stale at most once per this interval while heartbeats flow in
 	commitStatsDirtyDebounce = 1 * time.Minute
 	lookbackWindow           = 30 * 24 * time.Hour
 )
@@ -66,8 +66,15 @@ type CommitService struct {
 	queue       *artifex.Dispatcher
 	repoCache   map[string]repoCacheEntry
 	repoCacheMu sync.RWMutex
-	lastDirty   map[string]time.Time // user+project -> last time its commit stats were marked stale
+	lastDirty   map[string]dirtyMark // user -> last time their commit stats were marked stale
 	lastDirtyMu sync.Mutex
+	computeMu   sync.Map // user+project+branch -> *sync.Mutex, one stats computation at a time
+}
+
+// dirtyMark remembers when a user's commit stats were last marked stale and from which point in time on.
+type dirtyMark struct {
+	at    time.Time
+	since time.Time
 }
 
 // ProjectLinkInfo bundles a link with its repository metadata for UI consumption.
@@ -98,13 +105,13 @@ func NewCommitService(
 		durations:   durationService,
 		queue:       config.GetQueue(config.QueueDefault),
 		repoCache:   make(map[string]repoCacheEntry),
-		lastDirty:   make(map[string]time.Time),
+		lastDirty:   make(map[string]dirtyMark),
 	}
 
 	// Per-commit time is computed when a commit is synced. Heartbeats that arrive afterwards
-	// (late or backfilled ones) would otherwise only be counted once the next commit comes in,
-	// so every incoming heartbeat marks its project's commit stats stale; they are recomputed
-	// on the next read (ensureStatsCurrent).
+	// (late or backfilled ones) would otherwise never be counted, so a heartbeat marks the stats
+	// of all commits made at or after its own time stale; only those are recomputed, on the next
+	// sync or read. Heartbeats sent live are newer than any commit and mark nothing.
 	sub := config.EventBus().Subscribe(0, config.EventHeartbeatCreate)
 	go func(sub *hub.Subscription) {
 		for m := range sub.Receiver {
@@ -112,32 +119,35 @@ func NewCommitService(
 			if !ok || heartbeat == nil {
 				continue
 			}
-			srv.noteHeartbeat(heartbeat.UserID, heartbeat.Project, time.Now())
+			srv.noteHeartbeat(heartbeat.UserID, heartbeat.Time.T(), time.Now())
 		}
 	}(&sub)
 
 	return srv
 }
 
-// noteHeartbeat marks all commit stats of the heartbeat's project stale, at most once per
-// commitStatsDirtyDebounce per user and project. Returns whether stats were marked.
-func (s *CommitService) noteHeartbeat(userID, project string, now time.Time) bool {
-	if userID == "" || project == "" {
+// noteHeartbeat marks the stats of the user's commits made at or after the heartbeat's time stale.
+// All projects are covered, because durations are a single timeline per user: a late heartbeat in
+// one project can shorten a duration of another. Within commitStatsDirtyDebounce, heartbeats that
+// are not older than what was already marked are skipped. Returns whether stats were marked.
+func (s *CommitService) noteHeartbeat(userID string, heartbeatTime, now time.Time) bool {
+	if userID == "" || heartbeatTime.IsZero() {
 		return false
 	}
-	key := userID + "\x00" + project
 	s.lastDirtyMu.Lock()
-	if t, ok := s.lastDirty[key]; ok && now.Sub(t) < commitStatsDirtyDebounce {
+	prev, ok := s.lastDirty[userID]
+	recent := ok && now.Sub(prev.at) < commitStatsDirtyDebounce
+	if recent && !heartbeatTime.Before(prev.since) {
 		s.lastDirtyMu.Unlock()
 		return false
 	}
-	s.lastDirty[key] = now
+	s.lastDirty[userID] = dirtyMark{at: now, since: heartbeatTime}
 	s.lastDirtyMu.Unlock()
 
-	if err := s.stats.MarkDirtyByUserProjectAfter(userID, project, time.Time{}); err != nil {
-		slog.Warn("failed to mark commit stats stale", "project", project, "error", err)
+	if err := s.stats.MarkDirtyByUserCommittedSince(userID, heartbeatTime); err != nil {
+		slog.Warn("failed to mark commit stats stale", "user", userID, "error", err)
 		s.lastDirtyMu.Lock()
-		delete(s.lastDirty, key) // retry with the next heartbeat
+		delete(s.lastDirty, userID) // retry with the next heartbeat
 		s.lastDirtyMu.Unlock()
 		return false
 	}
@@ -298,10 +308,10 @@ STORE:
 		if err := s.commits.UpsertMany(collected); err != nil {
 			return err
 		}
-		// compute stats for new commits (ascending by date)
-		if err := s.computeStats(link.UserID, link.Project, repo, branch); err != nil {
-			slog.Warn("failed to compute commit stats", "error", err)
-		}
+	}
+	// compute stats for new commits and refresh stale ones, so reads rarely have to
+	if err := s.computeStats(link.UserID, link.Project, repo, branch); err != nil {
+		slog.Warn("failed to compute commit stats", "error", err)
 	}
 
 	now := models.CustomTime(time.Now())
@@ -714,13 +724,28 @@ func (s *CommitService) SyncByID(user *models.User, linkID string) error {
 	return s.Sync(link, account, repo)
 }
 
+// computeStats computes the time per commit for commits that have no stat yet or whose stat is
+// stale (marked dirty or from an older algorithm version); current stats are left alone.
 func (s *CommitService) computeStats(userID, project string, repo *models.ScmRepository, branch string) error {
+	mu, _ := s.computeMu.LoadOrStore(userID+"\x00"+project+"\x00"+branch, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
+
 	commits, err := s.commits.GetByRepoAndBranchAfter(repo.ID, branch, time.Time{}, 0, 0)
 	if err != nil {
 		return err
 	}
 	if len(commits) == 0 {
 		return nil
+	}
+
+	existing, _, err := s.stats.GetByUserProjectBranch(userID, project, branch, 0, 0)
+	if err != nil {
+		return err
+	}
+	current := make(map[string]bool, len(existing))
+	for _, stat := range existing {
+		current[stat.CommitHash] = !stat.Dirty && stat.AlgoVersion == models.CommitAlgoVersion
 	}
 
 	// sort ascending by committer date (just in case)
@@ -732,12 +757,22 @@ func (s *CommitService) computeStats(userID, project string, repo *models.ScmRep
 	filters := &models.Filters{Project: models.OrFilter{project}, Branch: models.OrFilter{branch}}
 
 	var prev time.Time
+	prevIsNew := false
 	for i, c := range commits {
 		end := c.CommitterDate.T()
 		start := prev
 		if i == 0 || start.IsZero() {
 			start = end.Add(-lookbackWindow)
 		}
+		prev = end
+
+		// a commit that newly appeared before this one shortens this one's interval
+		_, known := current[c.Hash]
+		if current[c.Hash] && !prevIsNew {
+			prevIsNew = false
+			continue
+		}
+		prevIsNew = !known
 
 		durs, err := s.durations.Get(start, end, &models.User{ID: userID}, filters, nil, true)
 		if err != nil {
@@ -763,24 +798,12 @@ func (s *CommitService) computeStats(userID, project string, repo *models.ScmRep
 		if err := s.stats.Upsert(stat); err != nil {
 			return err
 		}
-		prev = end
 	}
 	return nil
 }
 
 func (s *CommitService) ensureStatsCurrent(userID, project string, repo *models.ScmRepository, branch string) error {
-	stats, _, err := s.stats.GetByUserProjectBranch(userID, project, branch, 0, 0)
-	if err != nil {
-		return err
-	}
-
-	if len(stats) == 0 || slices.ContainsFunc(stats, func(stat *models.CommitStat) bool {
-		return stat.Dirty || stat.AlgoVersion != models.CommitAlgoVersion
-	}) {
-		return s.computeStats(userID, project, repo, branch)
-	}
-
-	return nil
+	return s.computeStats(userID, project, repo, branch)
 }
 
 func accumulateOverlap(durs models.Durations, start, end time.Time) time.Duration {
