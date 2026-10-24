@@ -194,6 +194,14 @@ type IScmCommitRepository interface {
 	DeleteByRepo(string) error
 }
 
+type IScmPullRequestRepository interface {
+	IBaseRepository
+	UpsertMany([]*models.ScmPullRequest) error
+	DeleteByRepo(string) error
+	GetLatestUpdatedByRepo(string) (*models.ScmPullRequest, error)
+	GetByRepoUpdatedSince(string, time.Time) ([]*models.ScmPullRequest, error)
+}
+
 type ICommitStatRepository interface {
 	IBaseRepository
 	Upsert(*models.CommitStat) error

@@ -186,3 +186,57 @@ func (c *GitHubClient) GetRepoByID(ctx context.Context, id string) (*githubRepo,
 	}
 	return &repo, nil
 }
+
+type githubPull struct {
+	Number    int        `json:"number"`
+	Title     string     `json:"title"`
+	HTMLURL   string     `json:"html_url"`
+	State     string     `json:"state"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	ClosedAt  *time.Time `json:"closed_at"`
+	MergedAt  *time.Time `json:"merged_at"`
+	MergeSHA  string     `json:"merge_commit_sha"`
+	User      struct {
+		Login string `json:"login"`
+	} `json:"user"`
+	Head struct {
+		Ref string `json:"ref"`
+		SHA string `json:"sha"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+}
+
+// ListPulls lists all of a repository's pull requests (open and closed), most recently updated first.
+func (c *GitHubClient) ListPulls(ctx context.Context, fullName string, page, perPage int) ([]*githubPull, error) {
+	u, _ := url.Parse(fmt.Sprintf("%s/repos/%s/pulls", c.baseURL, fullName))
+	q := u.Query()
+	q.Set("state", "all")
+	q.Set("sort", "updated")
+	q.Set("direction", "desc")
+	if page > 0 {
+		q.Set("page", fmt.Sprintf("%d", page))
+	}
+	if perPage > 0 {
+		q.Set("per_page", fmt.Sprintf("%d", perPage))
+	}
+	u.RawQuery = q.Encode()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	c.addAuth(req)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("github list pull requests failed: %s", resp.Status)
+	}
+	var pulls []*githubPull
+	if err := json.NewDecoder(resp.Body).Decode(&pulls); err != nil {
+		return nil, err
+	}
+	return pulls, nil
+}

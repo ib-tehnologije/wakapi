@@ -210,6 +210,10 @@ type ICommitService interface {
 	Schedule()
 }
 
+type IPullRequestService interface {
+	GetPullRequests(*models.User, string, time.Time) ([]*PullRequestInfo, error)
+}
+
 type IWebAuthnService interface {
 	CreateCredential(*webauthn.Credential, *models.User, string) (*models.WebAuthnCredential, error)
 	GetCredentialsByUser(*models.User) ([]*models.WebAuthnCredential, error)
