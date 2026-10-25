@@ -123,3 +123,25 @@ type CommitWindow struct {
 	Project string
 	UserID  string
 }
+
+// ScmPullRequest stores a pull request of a linked repository, so billing can tell when a branch's
+// work reached the default branch.
+type ScmPullRequest struct {
+	ID                string      `gorm:"primaryKey" json:"id"`
+	RepositoryID      string      `gorm:"not null; index:idx_scm_pr_repo_number,unique; index:idx_scm_pr_repo_updated" json:"repository_id"`
+	Number            int         `gorm:"not null; index:idx_scm_pr_repo_number,unique" json:"number"`
+	Title             string      `gorm:"type:text" json:"title"`
+	HTMLURL           string      `gorm:"size:512" json:"html_url"`
+	State             string      `gorm:"size:16" json:"state"`
+	HeadRef           string      `gorm:"size:255; index" json:"head_ref"`
+	HeadSHA           string      `gorm:"size:64" json:"head_sha"`
+	BaseRef           string      `gorm:"size:255" json:"base_ref"`
+	AuthorLogin       string      `gorm:"size:255" json:"author_login"`
+	OpenedAt          CustomTime  `json:"opened_at"`
+	ClosedAt          *CustomTime `json:"closed_at"`
+	MergedAt          *CustomTime `json:"merged_at"`
+	MergeCommitSHA    string      `gorm:"size:64" json:"merge_commit_sha"`
+	ProviderUpdatedAt CustomTime  `gorm:"index:idx_scm_pr_repo_updated" json:"provider_updated_at"`
+	CreatedAt         CustomTime  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt         CustomTime  `gorm:"autoUpdateTime" json:"updated_at"`
+}

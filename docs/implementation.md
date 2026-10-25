@@ -348,6 +348,37 @@ Response top-level keys:
 * `project`: object with `repository`
 * `status`: string ([WakaTime][2])
 
+### 7.3 Branch activity (Wakapi-specific, used by Odoo billing)
+
+**Route:**
+`GET /api/compat/wakatime/v1/users/current/branch-activity?start=YYYY-MM-DD&end=YYYY-MM-DD`
+
+Query params: `start`, `end` (required, both inclusive, at most 366 days), `timezone` (optional IANA
+name, defaults to the user's), `project` (optional).
+
+Returns `data`: one row per project, local day and branch with `seconds`, `first_at` and `last_at`
+(RFC 3339, UTC). Durations are clipped to the range and split at local midnight. They are one
+non-overlapping timeline per user, so a day's sum over branches equals the project's time that day
+and parallel branches are never counted twice.
+
+### 7.4 Pull requests (Wakapi-specific, used by Odoo billing)
+
+**Route:**
+`GET /api/compat/wakatime/v1/users/current/pull-requests?updated_since=<RFC 3339 or YYYY-MM-DD>`
+
+Query params: `updated_since` (optional; all when empty), `project` (optional).
+
+Returns `data`: pull requests of the user's linked repositories, oldest update first, with `project`,
+`repository`, `default_branch`, `number`, `title`, `html_url`, `state`, `head_ref`, `head_sha`,
+`base_ref`, `author_login`, `opened_at`, `closed_at`, `merged_at`, `merge_commit_sha`, `updated_at`.
+
+Pull requests are stored in `scm_pull_requests` by the regular link sync, right after the commits:
+`GET /repos/{owner}/{repo}/pulls?state=all&sort=updated&direction=desc`, paged until the first pull
+request older than the stored newest `provider_updated_at`. The GitHub token needs read access to
+pull requests (GitHub App permission *Pull requests: Read*, or `repo` for a classic PAT). A failed
+pull request sync does not fail the commit sync; it is shown in the link's `sync_error` and retried
+on the next sync.
+
 ---
 
 ## 8) Internal config + UI (Wakapi-specific)

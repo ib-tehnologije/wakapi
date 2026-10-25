@@ -27,6 +27,8 @@ const (
 	// a user's commit stats are marked stale at most once per this interval while heartbeats flow in
 	commitStatsDirtyDebounce = 1 * time.Minute
 	lookbackWindow           = 30 * 24 * time.Hour
+	pullSyncPerPage          = 100
+	pullSyncMaxPages         = 50
 )
 
 var (
@@ -60,6 +62,7 @@ type CommitService struct {
 	links       repositories.IProjectRepositoryLinkRepository
 	commits     repositories.IScmCommitRepository
 	stats       repositories.ICommitStatRepository
+	pulls       repositories.IScmPullRequestRepository
 	userService IUserService
 	heartbeats  IHeartbeatService
 	durations   IDurationService
@@ -77,6 +80,13 @@ type dirtyMark struct {
 	since time.Time
 }
 
+// PullRequestInfo is a pull request together with the project whose repository it belongs to.
+type PullRequestInfo struct {
+	Project     string
+	Repo        *models.ScmRepository
+	PullRequest *models.ScmPullRequest
+}
+
 // ProjectLinkInfo bundles a link with its repository metadata for UI consumption.
 type ProjectLinkInfo struct {
 	Link *models.ProjectRepositoryLink
@@ -89,6 +99,7 @@ func NewCommitService(
 	linkRepo repositories.IProjectRepositoryLinkRepository,
 	commitRepo repositories.IScmCommitRepository,
 	statRepo repositories.ICommitStatRepository,
+	pullRepo repositories.IScmPullRequestRepository,
 	userService IUserService,
 	heartbeatService IHeartbeatService,
 	durationService IDurationService,
@@ -100,6 +111,7 @@ func NewCommitService(
 		links:       linkRepo,
 		commits:     commitRepo,
 		stats:       statRepo,
+		pulls:       pullRepo,
 		userService: userService,
 		heartbeats:  heartbeatService,
 		durations:   durationService,
@@ -314,11 +326,115 @@ STORE:
 		slog.Warn("failed to compute commit stats", "error", err)
 	}
 
+	// Pull requests tell billing when a branch's work reached the default branch. A failure here
+	// does not fail the commit sync; it is shown on the link and retried on the next sync.
+	syncError := ""
+	if err := s.syncPulls(client, repo); err != nil {
+		slog.Warn("failed to sync pull requests", "repo", repo.FullName, "error", err)
+		syncError = "pull requests: " + err.Error()
+	}
+
 	now := models.CustomTime(time.Now())
 	link.LastSyncedAt = &now
 	link.SyncStatus = "ok"
-	link.SyncError = ""
+	link.SyncError = syncError
 	return s.links.Upsert(link)
+}
+
+// syncPulls stores the repository's pull requests updated since the last sync. GitHub lists them
+// most recently updated first, so paging stops at the first one older than the stored watermark.
+func (s *CommitService) syncPulls(client *GitHubClient, repo *models.ScmRepository) error {
+	if s.pulls == nil {
+		return nil
+	}
+	var watermark time.Time
+	if latest, err := s.pulls.GetLatestUpdatedByRepo(repo.ID); err == nil {
+		watermark = latest.ProviderUpdatedAt.T()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	collected := []*models.ScmPullRequest{}
+	for page := 1; page <= pullSyncMaxPages; page++ {
+		pulls, err := client.ListPulls(ctx, repo.FullName, page, pullSyncPerPage)
+		if err != nil {
+			return err
+		}
+		done := len(pulls) < pullSyncPerPage
+		for _, p := range pulls {
+			// equal timestamps are fetched again: several pull requests can share the watermark second
+			if !watermark.IsZero() && p.UpdatedAt.Before(watermark) {
+				done = true
+				break
+			}
+			collected = append(collected, mapPull(p, repo.ID))
+		}
+		if done {
+			break
+		}
+	}
+	return s.pulls.UpsertMany(collected)
+}
+
+// GetPullRequests lists the pull requests of all repositories linked to the user's projects that
+// were updated on GitHub at or after since (all of them when since is zero), optionally for one project.
+func (s *CommitService) GetPullRequests(user *models.User, project string, since time.Time) ([]*PullRequestInfo, error) {
+	links, err := s.links.ListByUser(user.ID)
+	if err != nil {
+		return nil, err
+	}
+	result := []*PullRequestInfo{}
+	for _, link := range links {
+		if project != "" && link.Project != project {
+			continue
+		}
+		repo, err := s.repos.GetByID(link.RepositoryID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		prs, err := s.pulls.GetByRepoUpdatedSince(repo.ID, since)
+		if err != nil {
+			return nil, err
+		}
+		for _, pr := range prs {
+			result = append(result, &PullRequestInfo{Project: link.Project, Repo: repo, PullRequest: pr})
+		}
+	}
+	slices.SortStableFunc(result, func(a, b *PullRequestInfo) int {
+		return a.PullRequest.ProviderUpdatedAt.T().Compare(b.PullRequest.ProviderUpdatedAt.T())
+	})
+	return result, nil
+}
+
+func mapPull(p *githubPull, repoID string) *models.ScmPullRequest {
+	optional := func(t *time.Time) *models.CustomTime {
+		if t == nil || t.IsZero() {
+			return nil
+		}
+		ct := models.CustomTime(*t)
+		return &ct
+	}
+	return &models.ScmPullRequest{
+		ID:                uuid.Must(uuid.NewV4()).String(),
+		RepositoryID:      repoID,
+		Number:            p.Number,
+		Title:             p.Title,
+		HTMLURL:           p.HTMLURL,
+		State:             p.State,
+		HeadRef:           p.Head.Ref,
+		HeadSHA:           p.Head.SHA,
+		BaseRef:           p.Base.Ref,
+		AuthorLogin:       p.User.Login,
+		OpenedAt:          models.CustomTime(p.CreatedAt),
+		ClosedAt:          optional(p.ClosedAt),
+		MergedAt:          optional(p.MergedAt),
+		MergeCommitSHA:    p.MergeSHA,
+		ProviderUpdatedAt: models.CustomTime(p.UpdatedAt),
+	}
 }
 
 func (s *CommitService) GetCommits(user *models.User, project, branch, author string, page, perPage int, dateFrom, dateTo *time.Time) (*CommitsResult, error) {
@@ -652,6 +768,11 @@ func (s *CommitService) UnlinkProject(user *models.User, project string, purge b
 		if err := s.commits.DeleteByRepo(repo.ID); err != nil {
 			return err
 		}
+		if s.pulls != nil {
+			if err := s.pulls.DeleteByRepo(repo.ID); err != nil {
+				return err
+			}
+		}
 		if err := s.repos.Delete(repo); err != nil {
 			return err
 		}
@@ -680,6 +801,11 @@ func (s *CommitService) UnlinkByID(user *models.User, linkID string, purge bool)
 		}
 		if err := s.commits.DeleteByRepo(repo.ID); err != nil {
 			return err
+		}
+		if s.pulls != nil {
+			if err := s.pulls.DeleteByRepo(repo.ID); err != nil {
+				return err
+			}
 		}
 		if err := s.repos.Delete(repo); err != nil {
 			return err

@@ -73,6 +73,7 @@ var (
 	projectRepoLinkRepository repositories.IProjectRepositoryLinkRepository
 	scmCommitRepository       repositories.IScmCommitRepository
 	commitStatRepository      repositories.ICommitStatRepository
+	scmPullRequestRepository  repositories.IScmPullRequestRepository
 	codexTaskRepository       *repositories.CodexTaskSessionRepository
 	webAuthnRepository        repositories.IWebAuthnRepository
 )
@@ -97,6 +98,7 @@ var (
 	miscService            services.IMiscService
 	apiKeyService          services.IApiKeyService
 	commitService          services.ICommitService
+	pullRequestService     services.IPullRequestService
 	codexTaskService       services.ICodexTaskService
 	webAuthnService        services.IWebAuthnService
 )
@@ -194,6 +196,7 @@ func main() {
 	projectRepoLinkRepository = repositories.NewProjectRepositoryLinkRepository(db)
 	scmCommitRepository = repositories.NewScmCommitRepository(db)
 	commitStatRepository = repositories.NewCommitStatRepository(db)
+	scmPullRequestRepository = repositories.NewScmPullRequestRepository(db)
 	codexTaskRepository = repositories.NewCodexTaskSessionRepository(db)
 	webAuthnRepository = repositories.NewWebAuthnRepository(db)
 
@@ -215,7 +218,9 @@ func main() {
 	diagnosticsService = services.NewDiagnosticsService(diagnosticsRepository)
 	housekeepingService = services.NewHousekeepingService(userService, heartbeatService, projectService, summaryService, aliasRepository) // can pass any repo here
 	miscService = services.NewMiscService(userService, heartbeatService, summaryService, keyValueService, mailService)
-	commitService = services.NewCommitService(scmAccountRepository, scmRepositoryRepository, projectRepoLinkRepository, scmCommitRepository, commitStatRepository, userService, heartbeatService, durationService)
+	concreteCommitService := services.NewCommitService(scmAccountRepository, scmRepositoryRepository, projectRepoLinkRepository, scmCommitRepository, commitStatRepository, scmPullRequestRepository, userService, heartbeatService, durationService)
+	commitService = concreteCommitService
+	pullRequestService = concreteCommitService
 	codexTaskService = services.NewCodexTaskService(codexTaskRepository)
 	webAuthnService = services.NewWebAuthnService(webAuthnRepository)
 
@@ -262,6 +267,7 @@ func main() {
 	wakatimeV1LeadersHandler := wtV1Routes.NewLeadersHandler(userService, leaderboardService)
 	wakatimeV1UserAgentsHandler := wtV1Routes.NewUserAgentsHandler(userService, heartbeatService)
 	wakatimeV1CommitsHandler := wtV1Routes.NewCommitsHandler(userService, commitService)
+	wakatimeV1WorkHandler := wtV1Routes.NewWorkHandler(userService, durationService, pullRequestService)
 	shieldV1BadgeHandler := shieldsV1Routes.NewBadgeHandler(summaryService, userService)
 
 	// MVC Handlers
@@ -351,6 +357,7 @@ func main() {
 	wakatimeV1LeadersHandler.RegisterRoutes(apiRouter)
 	wakatimeV1UserAgentsHandler.RegisterRoutes(apiRouter)
 	wakatimeV1CommitsHandler.RegisterRoutes(apiRouter)
+	wakatimeV1WorkHandler.RegisterRoutes(apiRouter)
 	shieldV1BadgeHandler.RegisterRoutes(apiRouter)
 	captchaHandler.RegisterRoutes(apiRouter)
 
