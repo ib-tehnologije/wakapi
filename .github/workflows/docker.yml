@@ -5,15 +5,37 @@ on:
     types:
       - published
   workflow_dispatch:
-    
+  # Every merge to master is published once its tests pass; Fleet then rolls out the new tag.
+  workflow_run:
+    workflows:
+      - ci
+    types:
+      - completed
+    branches:
+      - master
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   docker-publish:
     name: 'Build and publish Docker image'
+    # Hosted runner on purpose: this repository is public, and the organization's self-hosted
+    # runner groups serve private repositories only.
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # the commit the tests passed on, not whatever master points to by now
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
 
       - name: Set version
         run: |
@@ -44,6 +66,8 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
+          # tags (sha) follow the checked-out commit, also for workflow_run
+          context: git
           images: |
             ghcr.io/${{ github.repository }}
           tags: |
