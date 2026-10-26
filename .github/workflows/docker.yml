@@ -37,6 +37,14 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
 
+      # checking out a sha leaves a detached HEAD, from which docker/metadata-action's git context
+      # cannot infer a ref; a local branch at the same commit gives it one (a release is on a tag)
+      - name: Attach HEAD to its branch
+        if: github.event_name != 'release'
+        env:
+          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+        run: git checkout -B "$BRANCH"
+
       - name: Set version
         run: |
           (git describe --tags --exact-match \
